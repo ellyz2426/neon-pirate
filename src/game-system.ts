@@ -326,6 +326,19 @@ export class GameSystem extends createSystem({}) {
 	// Muzzle flash
 	private muzzleFlashes: { mesh: Mesh; timer: number }[] = [];
 
+	// Water foam particles around ship
+	private foamParticles: { mesh: Mesh; life: number; maxLife: number; ox: number; oz: number }[] = [];
+
+	// Lightning effect during boss waves
+	private lightningTimer = 0;
+	private lightningFlash: Mesh | null = null;
+
+	// Floating barrels (destructible obstacles)
+	private barrels: { mesh: Mesh; px: number; pz: number; hp: number; bobPhase: number }[] = [];
+
+	// Water column splash effect
+	private splashes: { group: Group; timer: number }[] = [];
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -660,6 +673,12 @@ export class GameSystem extends createSystem({}) {
 			}
 		}
 
+		// Floating barrels
+		const barrelCount = Math.min(2 + Math.floor(this.wave / 2), 8);
+		for (let i = 0; i < barrelCount; i++) {
+			this.spawnBarrel();
+		}
+
 		const bpm = 100 + Math.min(this.wave * 5, 60);
 		setBPM(bpm, this.volume);
 	}
@@ -750,6 +769,11 @@ export class GameSystem extends createSystem({}) {
 		this.activePowerUps = [];
 		for (const mf of this.muzzleFlashes) mf.mesh.removeFromParent();
 		this.muzzleFlashes = [];
+		for (const b of this.barrels) b.mesh.removeFromParent();
+		this.barrels = [];
+		for (const s of this.splashes) s.group.removeFromParent();
+		this.splashes = [];
+		if (this.lightningFlash) { this.lightningFlash.removeFromParent(); this.lightningFlash = null; }
 	}
 
 	// ==== SPAWNING ====
@@ -886,31 +910,63 @@ export class GameSystem extends createSystem({}) {
 		if (dist < 0.1) return;
 
 		const speed = 15;
-		const vx = (dx / dist) * speed;
-		const vz = (dz / dist) * speed;
+		const baseVx = (dx / dist) * speed;
+		const baseVz = (dz / dist) * speed;
 
-		// Boss fires multiple
-		const shots = enemy.shipType === EnemyType.ManOWar ? 3 : 1;
-		for (let s = 0; s < shots; s++) {
-			const spreadX = s === 0 ? 0 : (s === 1 ? 3 : -3);
+		// Type-specific fire patterns
+		if (enemy.shipType === EnemyType.ManOWar) {
+			// Boss: 3 aimed shots + 2 random scatter
+			for (let s = 0; s < 5; s++) {
+				const spreadAngle = s < 3 ? (s - 1) * 0.12 : (Math.random() - 0.5) * 0.6;
+				const cos = Math.cos(spreadAngle);
+				const sin = Math.sin(spreadAngle);
+				const svx = baseVx * cos - baseVz * sin;
+				const svz = baseVx * sin + baseVz * cos;
+				const mesh = createCannonball(true, scheme);
+				mesh.position.set(enemy.group.position.x, 2, enemy.group.position.z);
+				this.world.scene.add(mesh);
+				this.spawnMuzzleFlash(enemy.group.position.x, 2.5, enemy.group.position.z);
+				this.cannonballs.push({
+					mesh, vx: svx + (Math.random() - 0.5), vy: 3 + Math.random(),
+					vz: svz + (Math.random() - 0.5),
+					damage: enemy.damage, isEnemy: true, lifetime: 0, maxLifetime: 5, trail: [],
+				});
+			}
+		} else if (enemy.shipType === EnemyType.Brigantine) {
+			// Brigantine: 2-shot spread
+			for (let s = 0; s < 2; s++) {
+				const spreadAngle = (s - 0.5) * 0.15;
+				const cos = Math.cos(spreadAngle);
+				const sin = Math.sin(spreadAngle);
+				const svx = baseVx * cos - baseVz * sin;
+				const svz = baseVx * sin + baseVz * cos;
+				const mesh = createCannonball(true, scheme);
+				mesh.position.set(enemy.group.position.x + (s - 0.5) * 2, 2, enemy.group.position.z);
+				this.world.scene.add(mesh);
+				this.cannonballs.push({
+					mesh, vx: svx, vy: 3 + Math.random() * 0.5,
+					vz: svz, damage: enemy.damage, isEnemy: true, lifetime: 0, maxLifetime: 4, trail: [],
+				});
+			}
+		} else if (enemy.shipType === EnemyType.Galleon) {
+			// Galleon: single heavy shot with high arc
 			const mesh = createCannonball(true, scheme);
-			mesh.position.set(
-				enemy.group.position.x + spreadX,
-				2,
-				enemy.group.position.z,
-			);
+			mesh.position.set(enemy.group.position.x, 2, enemy.group.position.z);
+			mesh.scale.setScalar(1.5);
 			this.world.scene.add(mesh);
-
 			this.cannonballs.push({
-				mesh,
-				vx: vx + (Math.random() - 0.5) * 2,
-				vy: 3 + Math.random(),
-				vz: vz + (Math.random() - 0.5) * 2,
-				damage: enemy.damage,
-				isEnemy: true,
-				lifetime: 0,
-				maxLifetime: 4,
-				trail: [],
+				mesh, vx: baseVx * 0.8, vy: 6,
+				vz: baseVz * 0.8, damage: enemy.damage * 1.5, isEnemy: true, lifetime: 0, maxLifetime: 5, trail: [],
+			});
+		} else {
+			// Sloop: single quick shot
+			const mesh = createCannonball(true, scheme);
+			mesh.position.set(enemy.group.position.x, 2, enemy.group.position.z);
+			this.world.scene.add(mesh);
+			this.cannonballs.push({
+				mesh, vx: baseVx + (Math.random() - 0.5) * 2,
+				vy: 3 + Math.random(), vz: baseVz + (Math.random() - 0.5) * 2,
+				damage: enemy.damage, isEnemy: true, lifetime: 0, maxLifetime: 4, trail: [],
 			});
 		}
 	}
@@ -1208,10 +1264,19 @@ export class GameSystem extends createSystem({}) {
 		this.updateActivePowerUps(delta);
 		this.updateWhirlpools(delta);
 		this.updateMuzzleFlashes(delta);
+		this.updateFoamParticles(delta);
+		this.updateBarrels(delta);
+		this.updateSplashes(delta);
+		this.updateLightning(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
 			this.spawnPowerUp();
+		}
+
+		// Spawn foam around player ship
+		if (this.playerShipGroup && Math.random() < 0.15) {
+			this.spawnFoamParticle();
 		}
 
 		// Combo decay
@@ -1485,6 +1550,21 @@ export class GameSystem extends createSystem({}) {
 							this.stats.minesDestroyed++;
 							this.score += 50;
 							toRemove.push(i);
+							break;
+						}
+					}
+				}
+
+				// Hit barrels
+				if (!hitSomething) {
+					for (let j = 0; j < this.barrels.length; j++) {
+						const barrel = this.barrels[j];
+						const dx = ball.mesh.position.x - barrel.mesh.position.x;
+						const dz = ball.mesh.position.z - barrel.mesh.position.z;
+						if (Math.sqrt(dx * dx + dz * dz) < 1.2) {
+							barrel.hp -= ball.damage;
+							toRemove.push(i);
+							hitSomething = true;
 							break;
 						}
 					}
@@ -1997,5 +2077,168 @@ export class GameSystem extends createSystem({}) {
 			pos.setZ(i, wave1 + wave2 + wave3);
 		}
 		pos.needsUpdate = true;
+	}
+
+	// ── Water Foam Particles ──────────────────────────────────
+	private spawnFoamParticle() {
+		if (!this.playerShipGroup) return;
+		const px = this.playerShipGroup.position.x + (Math.random() - 0.5) * 4;
+		const pz = this.playerShipGroup.position.z + (Math.random() - 0.5) * 4;
+		const mesh = new Mesh(
+			new SphereGeometry(0.1 + Math.random() * 0.1, 4, 3),
+			new MeshBasicMaterial({
+				color: 0xaaddff, transparent: true, opacity: 0.4,
+			}),
+		);
+		mesh.position.set(px, 0.05, pz);
+		this.scene.add(mesh);
+		const maxLife = 1.5 + Math.random();
+		this.foamParticles.push({ mesh, life: maxLife, maxLife, ox: (Math.random() - 0.5) * 0.3, oz: (Math.random() - 0.5) * 0.3 });
+	}
+
+	private updateFoamParticles(delta: number) {
+		for (let i = this.foamParticles.length - 1; i >= 0; i--) {
+			const fp = this.foamParticles[i];
+			fp.life -= delta;
+			fp.mesh.position.x += fp.ox * delta;
+			fp.mesh.position.z += fp.oz * delta;
+			const t = fp.life / fp.maxLife;
+			(fp.mesh.material as MeshBasicMaterial).opacity = t * 0.4;
+			fp.mesh.scale.setScalar(1 + (1 - t) * 0.5);
+			if (fp.life <= 0) {
+				fp.mesh.removeFromParent();
+				this.foamParticles.splice(i, 1);
+			}
+		}
+	}
+
+	// ── Floating Barrels ──────────────────────────────────────
+	private spawnBarrel() {
+		const px = (Math.random() - 0.5) * 70;
+		const pz = (Math.random() - 0.5) * 70;
+		const barrel = new Mesh(
+			new CylinderGeometry(0.4, 0.4, 0.8, 8),
+			new MeshStandardMaterial({
+				color: 0x8B4513, emissive: 0x331100, emissiveIntensity: 0.3,
+			}),
+		);
+		// Add bands
+		const band1 = new Mesh(
+			new CylinderGeometry(0.42, 0.42, 0.06, 8),
+			new MeshStandardMaterial({ color: 0x666666, emissive: 0x333333, emissiveIntensity: 0.2 }),
+		);
+		band1.position.y = 0.2;
+		barrel.add(band1);
+		const band2 = band1.clone();
+		band2.position.y = -0.2;
+		barrel.add(band2);
+
+		barrel.position.set(px, 0.3, pz);
+		barrel.rotation.z = Math.random() * 0.3;
+		this.scene.add(barrel);
+		this.barrels.push({ mesh: barrel, px, pz, hp: 1, bobPhase: Math.random() * Math.PI * 2 });
+	}
+
+	private updateBarrels(delta: number) {
+		for (let i = this.barrels.length - 1; i >= 0; i--) {
+			const b = this.barrels[i];
+			b.bobPhase += delta * 1.5;
+			b.mesh.position.y = 0.3 + Math.sin(b.bobPhase) * 0.1;
+			b.mesh.rotation.y += delta * 0.3;
+
+			if (b.hp <= 0) {
+				this.spawnExplosion(b.mesh.position.x, b.mesh.position.y, b.mesh.position.z, 0.5);
+				this.spawnSplash(b.mesh.position.x, b.mesh.position.z);
+				// Drop treasure or power-up
+				if (Math.random() < 0.3) {
+					this.spawnTreasure(b.mesh.position.x, b.mesh.position.z, 30 + this.wave * 5);
+				}
+				b.mesh.removeFromParent();
+				this.barrels.splice(i, 1);
+			}
+		}
+	}
+
+	// ── Water Splash ──────────────────────────────────────────
+	private spawnSplash(x: number, z: number) {
+		const group = new Group();
+		for (let i = 0; i < 8; i++) {
+			const angle = (i / 8) * Math.PI * 2;
+			const droplet = new Mesh(
+				new SphereGeometry(0.08, 4, 3),
+				new MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.6 }),
+			);
+			droplet.position.set(Math.cos(angle) * 0.5, 0.5, Math.sin(angle) * 0.5);
+			group.add(droplet);
+		}
+		// Central column
+		const column = new Mesh(
+			new CylinderGeometry(0.15, 0.3, 1, 6),
+			new MeshBasicMaterial({ color: 0xaaddff, transparent: true, opacity: 0.4 }),
+		);
+		column.position.y = 0.5;
+		group.add(column);
+
+		group.position.set(x, 0.1, z);
+		this.scene.add(group);
+		this.splashes.push({ group, timer: 0 });
+	}
+
+	private updateSplashes(delta: number) {
+		for (let i = this.splashes.length - 1; i >= 0; i--) {
+			const s = this.splashes[i];
+			s.timer += delta;
+			const t = s.timer / 0.6;
+			// Expand outward
+			for (let c = 0; c < s.group.children.length - 1; c++) {
+				const child = s.group.children[c];
+				const angle = (c / 8) * Math.PI * 2;
+				child.position.set(Math.cos(angle) * (0.5 + t * 2), 0.5 + t - t * t * 3, Math.sin(angle) * (0.5 + t * 2));
+				(child as Mesh).scale.setScalar(1 - t);
+			}
+			// Column shrinks
+			const col = s.group.children[s.group.children.length - 1] as Mesh;
+			col.scale.y = Math.max(0, 1 - t * 2);
+			(col.material as MeshBasicMaterial).opacity = Math.max(0, 0.4 * (1 - t));
+
+			if (s.timer >= 0.6) {
+				s.group.removeFromParent();
+				this.splashes.splice(i, 1);
+			}
+		}
+	}
+
+	// ── Lightning Effect (Boss Waves) ──────────────────────────
+	private updateLightning(delta: number) {
+		const isBossWave = this.wave % 5 === 0 && this.enemies.some(e => e.shipType === EnemyType.ManOWar);
+		if (!isBossWave) {
+			if (this.lightningFlash) { this.lightningFlash.removeFromParent(); this.lightningFlash = null; }
+			return;
+		}
+
+		this.lightningTimer -= delta;
+		if (this.lightningTimer <= 0) {
+			// Random lightning flash
+			this.lightningTimer = 3 + Math.random() * 5;
+
+			if (!this.lightningFlash) {
+				this.lightningFlash = new Mesh(
+					new BoxGeometry(200, 200, 0.1),
+					new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }),
+				);
+				this.lightningFlash.position.set(0, 50, 0);
+				this.lightningFlash.rotation.x = -Math.PI / 2;
+				this.scene.add(this.lightningFlash);
+			}
+			(this.lightningFlash.material as MeshBasicMaterial).opacity = 0.15 + Math.random() * 0.1;
+		}
+
+		if (this.lightningFlash) {
+			const mat = this.lightningFlash.material as MeshBasicMaterial;
+			if (mat.opacity > 0) {
+				mat.opacity *= Math.exp(-12 * delta);
+				if (mat.opacity < 0.005) mat.opacity = 0;
+			}
+		}
 	}
 }
