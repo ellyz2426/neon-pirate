@@ -52,6 +52,12 @@ import {
 	playUpgrade,
 	playMineExplode,
 	playCombo,
+	playDash,
+	playPowerUpCollect,
+	playLightningStrike,
+	playBarrelBreak,
+	playSplashImpact,
+	playWhirlpoolHum,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -1214,7 +1220,7 @@ export class GameSystem extends createSystem({}) {
 				this.dashTimer = 0.3;
 				this.dashCooldown = 2.0;
 				this.dashInvincible = true;
-				playMenuSelect(this.volume);
+				playDash(this.volume);
 			}
 			this.prevDashKey = dashKey;
 
@@ -1472,6 +1478,7 @@ export class GameSystem extends createSystem({}) {
 			if (ball.mesh.position.y < 0) {
 				playSplash(this.volume);
 				this.spawnExplosion(ball.mesh.position.x, 0.2, ball.mesh.position.z, 0.3);
+				this.spawnSplash(ball.mesh.position.x, ball.mesh.position.z);
 				toRemove.push(i);
 				continue;
 			}
@@ -1771,7 +1778,7 @@ export class GameSystem extends createSystem({}) {
 			if (dist < 3) {
 				this.activatePowerUp(pu.type);
 				toRemove.push(i);
-				playTreasureCollect(this.volume);
+				playPowerUpCollect(this.volume);
 				this.spawnExplosion(pu.group.position.x, pu.group.position.y, pu.group.position.z, 0.3);
 			}
 		}
@@ -1905,6 +1912,11 @@ export class GameSystem extends createSystem({}) {
 			if (dist < 3 && !this.dashInvincible) {
 				this.playerHp -= delta * 5;
 				this.damageFlashTimer = 0.2;
+			}
+
+			// Hum when player is near
+			if (dist < 8 && Math.random() < 0.01) {
+				playWhirlpoolHum(this.volume * 0.5);
 			}
 
 			// Pull enemies too
@@ -2149,6 +2161,7 @@ export class GameSystem extends createSystem({}) {
 			if (b.hp <= 0) {
 				this.spawnExplosion(b.mesh.position.x, b.mesh.position.y, b.mesh.position.z, 0.5);
 				this.spawnSplash(b.mesh.position.x, b.mesh.position.z);
+				playBarrelBreak(this.volume);
 				// Drop treasure or power-up
 				if (Math.random() < 0.3) {
 					this.spawnTreasure(b.mesh.position.x, b.mesh.position.z, 30 + this.wave * 5);
@@ -2161,6 +2174,7 @@ export class GameSystem extends createSystem({}) {
 
 	// ── Water Splash ──────────────────────────────────────────
 	private spawnSplash(x: number, z: number) {
+		playSplashImpact(this.volume);
 		const group = new Group();
 		for (let i = 0; i < 8; i++) {
 			const angle = (i / 8) * Math.PI * 2;
@@ -2231,6 +2245,7 @@ export class GameSystem extends createSystem({}) {
 				this.scene.add(this.lightningFlash);
 			}
 			(this.lightningFlash.material as MeshBasicMaterial).opacity = 0.15 + Math.random() * 0.1;
+			playLightningStrike(this.volume);
 		}
 
 		if (this.lightningFlash) {

@@ -175,3 +175,123 @@ export function setBPM(bpm: number, vol: number = 0.7) {
 		startMusic(vol, bpm);
 	}
 }
+
+export function playDash(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.connect(g); g.connect(ctx.destination);
+	o.type = 'sawtooth';
+	o.frequency.setValueAtTime(200, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.1);
+	g.gain.setValueAtTime(vol * 0.3, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+	o.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.15);
+}
+
+export function playPowerUpCollect(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const notes = [523, 659, 784, 1047]; // C5-E5-G5-C6
+	notes.forEach((freq, i) => {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.connect(g); g.connect(ctx.destination);
+		o.type = 'sine';
+		o.frequency.value = freq;
+		const t = ctx.currentTime + i * 0.08;
+		g.gain.setValueAtTime(vol * 0.25, t);
+		g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+		o.start(t);
+		o.stop(t + 0.15);
+	});
+}
+
+export function playLightningStrike(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// White noise burst
+	const bufferSize = ctx.sampleRate * 0.3;
+	const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+	const data = buffer.getChannelData(0);
+	for (let i = 0; i < bufferSize; i++) {
+		data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.08));
+	}
+	const source = ctx.createBufferSource();
+	source.buffer = buffer;
+	const g = ctx.createGain();
+	source.connect(g); g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.4, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+	source.start(ctx.currentTime);
+}
+
+export function playBarrelBreak(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Wood cracking sound - two short noise bursts
+	for (let b = 0; b < 2; b++) {
+		const bufSize = ctx.sampleRate * 0.05;
+		const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+		const d = buf.getChannelData(0);
+		for (let i = 0; i < bufSize; i++) {
+			d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.015));
+		}
+		const src = ctx.createBufferSource();
+		src.buffer = buf;
+		const filter = ctx.createBiquadFilter();
+		filter.type = 'bandpass';
+		filter.frequency.value = 800 + b * 400;
+		filter.Q.value = 2;
+		const g = ctx.createGain();
+		src.connect(filter); filter.connect(g); g.connect(ctx.destination);
+		const t = ctx.currentTime + b * 0.04;
+		g.gain.setValueAtTime(vol * 0.3, t);
+		g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+		src.start(t);
+	}
+}
+
+export function playSplashImpact(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.connect(g); g.connect(ctx.destination);
+	o.type = 'sine';
+	o.frequency.setValueAtTime(150, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.2);
+	g.gain.setValueAtTime(vol * 0.2, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+	o.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.25);
+}
+
+export function playWhirlpoolHum(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	const lfo = ctx.createOscillator();
+	const lfoG = ctx.createGain();
+	o.connect(g); g.connect(ctx.destination);
+	lfo.connect(lfoG); lfoG.connect(o.frequency);
+	o.type = 'sine';
+	o.frequency.value = 60;
+	lfo.frequency.value = 3;
+	lfoG.gain.value = 15;
+	g.gain.setValueAtTime(vol * 0.08, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+	o.start(ctx.currentTime);
+	lfo.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.5);
+	lfo.stop(ctx.currentTime + 0.5);
+}
