@@ -578,6 +578,217 @@ export function createIsland(scheme: typeof COLOR_SCHEMES[0]): Group {
 	return g;
 }
 
+// Kraken tentacle segment
+export function createKrakenTentacle(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	const segCount = 8;
+	for (let i = 0; i < segCount; i++) {
+		const radius = 0.6 - i * 0.06;
+		const seg = new Mesh(
+			new CylinderGeometry(radius, radius + 0.05, 1.5, 8),
+			new MeshStandardMaterial({
+				color: '#2a0040',
+				emissive: scheme.accent,
+				emissiveIntensity: 0.3 + i * 0.05,
+			}),
+		);
+		seg.position.y = i * 1.3;
+		seg.rotation.z = Math.sin(i * 0.5) * 0.15;
+		g.add(seg);
+
+		// Suction cups (small spheres on underside)
+		if (i > 1 && i < segCount - 1) {
+			const cup = new Mesh(
+				new SphereGeometry(0.12, 6, 4),
+				new MeshStandardMaterial({
+					color: '#550066',
+					emissive: scheme.accent,
+					emissiveIntensity: 0.6,
+				}),
+			);
+			cup.position.set(0, i * 1.3, radius * 0.7);
+			g.add(cup);
+		}
+	}
+	return g;
+}
+
+// Kraken head/body
+export function createKrakenHead(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Main body - large elongated sphere
+	const body = new Mesh(
+		new SphereGeometry(3, 12, 10),
+		new MeshStandardMaterial({
+			color: '#1a0030',
+			emissive: scheme.accent,
+			emissiveIntensity: 0.4,
+		}),
+	);
+	body.scale.set(1, 0.7, 1.3);
+	g.add(body);
+
+	// Eyes - two glowing orbs
+	for (let side = -1; side <= 1; side += 2) {
+		const eye = new Mesh(
+			new SphereGeometry(0.5, 8, 6),
+			new MeshStandardMaterial({
+				color: '#ffff00',
+				emissive: '#ffaa00',
+				emissiveIntensity: 3,
+			}),
+		);
+		eye.position.set(side * 1.5, 0.5, -2.5);
+		g.add(eye);
+
+		// Pupil
+		const pupil = new Mesh(
+			new SphereGeometry(0.2, 6, 4),
+			new MeshStandardMaterial({
+				color: '#000000',
+				emissive: '#220000',
+				emissiveIntensity: 0.3,
+			}),
+		);
+		pupil.position.set(side * 1.5, 0.5, -2.9);
+		g.add(pupil);
+	}
+
+	// Beak
+	const beak = new Mesh(
+		new ConeGeometry(0.8, 1.5, 6),
+		new MeshStandardMaterial({
+			color: '#110020',
+			emissive: scheme.primary,
+			emissiveIntensity: 0.4,
+		}),
+	);
+	beak.position.set(0, -0.5, -3.5);
+	beak.rotation.x = Math.PI / 2;
+	g.add(beak);
+
+	// Crown ridges
+	for (let i = 0; i < 5; i++) {
+		const ridge = new Mesh(
+			new ConeGeometry(0.3, 1.2, 4),
+			new MeshStandardMaterial({
+				color: '#330055',
+				emissive: scheme.accent,
+				emissiveIntensity: 0.5,
+			}),
+		);
+		const angle = ((i - 2) / 5) * Math.PI * 0.6;
+		ridge.position.set(Math.sin(angle) * 2, 2, Math.cos(angle) * -1);
+		ridge.rotation.z = angle * 0.4;
+		g.add(ridge);
+	}
+
+	return g;
+}
+
+// Harpoon projectile
+export function createHarpoon(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Shaft
+	const shaft = new Mesh(
+		new CylinderGeometry(0.04, 0.04, 3, 6),
+		new MeshStandardMaterial({
+			color: '#664422',
+			emissive: scheme.secondary,
+			emissiveIntensity: 0.3,
+		}),
+	);
+	shaft.rotation.x = Math.PI / 2;
+	g.add(shaft);
+
+	// Barbed tip
+	const tip = new Mesh(
+		new ConeGeometry(0.12, 0.5, 4),
+		new MeshStandardMaterial({
+			color: '#888888',
+			emissive: scheme.primary,
+			emissiveIntensity: 0.8,
+		}),
+	);
+	tip.rotation.x = -Math.PI / 2;
+	tip.position.z = -1.7;
+	g.add(tip);
+
+	// Barbs
+	for (let side = -1; side <= 1; side += 2) {
+		const barb = new Mesh(
+			new ConeGeometry(0.06, 0.25, 3),
+			new MeshStandardMaterial({
+				color: '#888888',
+				emissive: scheme.primary,
+				emissiveIntensity: 0.5,
+			}),
+		);
+		barb.position.set(side * 0.1, 0, -1.3);
+		barb.rotation.z = side * 0.6;
+		barb.rotation.x = -0.3;
+		g.add(barb);
+	}
+
+	return g;
+}
+
+// Rope segment for harpoon line
+export function createRopeSegment(): Mesh {
+	return new Mesh(
+		new SphereGeometry(0.03, 3, 2),
+		new MeshStandardMaterial({
+			color: '#997744',
+			emissive: '#554422',
+			emissiveIntensity: 0.2,
+		}),
+	);
+}
+
+// Ship wreckage piece
+export function createWreckage(): Group {
+	const g = new Group();
+	const woodColor = '#5c3a1e';
+	const type = Math.floor(Math.random() * 3);
+
+	if (type === 0) {
+		// Broken plank
+		const plank = new Mesh(
+			new BoxGeometry(0.3 + Math.random() * 0.3, 0.08, 1.5 + Math.random()),
+			new MeshStandardMaterial({ color: woodColor, emissive: '#2a1800', emissiveIntensity: 0.15 }),
+		);
+		g.add(plank);
+	} else if (type === 1) {
+		// Barrel half
+		const half = new Mesh(
+			new CylinderGeometry(0.3, 0.3, 0.5, 6, 1, false, 0, Math.PI),
+			new MeshStandardMaterial({ color: '#8B4513', emissive: '#331100', emissiveIntensity: 0.2 }),
+		);
+		half.rotation.z = Math.PI / 2;
+		g.add(half);
+	} else {
+		// Mast fragment
+		const frag = new Mesh(
+			new CylinderGeometry(0.06, 0.08, 2 + Math.random(), 6),
+			new MeshStandardMaterial({ color: woodColor, emissive: '#1a0f04', emissiveIntensity: 0.15 }),
+		);
+		frag.rotation.z = Math.random() * Math.PI;
+		g.add(frag);
+		// Torn sail scrap
+		const scrap = new Mesh(
+			new PlaneGeometry(0.8, 0.5),
+			new MeshStandardMaterial({
+				color: '#222222', transparent: true, opacity: 0.5, side: DoubleSide,
+			}),
+		);
+		scrap.position.set(0.3, 0.2, 0);
+		scrap.rotation.z = 0.3;
+		g.add(scrap);
+	}
+
+	return g;
+}
+
 // Floating seagull silhouette
 export function createSeagull(): Group {
 	const g = new Group();

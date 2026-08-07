@@ -323,6 +323,156 @@ export function playThunder(vol: number = 0.7) {
 	source.start(ctx.currentTime);
 }
 
+export function playKrakenRoar(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Deep rumbling growl with LFO modulation
+	const o1 = ctx.createOscillator();
+	const o2 = ctx.createOscillator();
+	const lfo = ctx.createOscillator();
+	const lfoGain = ctx.createGain();
+	const g = ctx.createGain();
+	o1.type = 'sawtooth';
+	o1.frequency.setValueAtTime(40, ctx.currentTime);
+	o1.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 1.5);
+	o2.type = 'triangle';
+	o2.frequency.setValueAtTime(55, ctx.currentTime);
+	o2.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 1.5);
+	lfo.type = 'sine';
+	lfo.frequency.value = 5;
+	lfoGain.gain.value = 12;
+	lfo.connect(lfoGain);
+	lfoGain.connect(o1.frequency);
+	o1.connect(g);
+	o2.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.35, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
+	o1.start(ctx.currentTime);
+	o2.start(ctx.currentTime);
+	lfo.start(ctx.currentTime);
+	o1.stop(ctx.currentTime + 1.5);
+	o2.stop(ctx.currentTime + 1.5);
+	lfo.stop(ctx.currentTime + 1.5);
+	// Add noise burst for the initial attack
+	const bufSize = ctx.sampleRate * 0.4;
+	const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+	const d = buf.getChannelData(0);
+	for (let i = 0; i < bufSize; i++) {
+		d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.15));
+	}
+	const src = ctx.createBufferSource();
+	src.buffer = buf;
+	const filter = ctx.createBiquadFilter();
+	filter.type = 'lowpass';
+	filter.frequency.value = 120;
+	const gn = ctx.createGain();
+	src.connect(filter);
+	filter.connect(gn);
+	gn.connect(ctx.destination);
+	gn.gain.setValueAtTime(vol * 0.25, ctx.currentTime);
+	gn.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+	src.start(ctx.currentTime);
+}
+
+export function playKrakenSweep(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Whooshing tentacle sweep
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'sawtooth';
+	o.frequency.setValueAtTime(100, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.15);
+	o.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.4);
+	o.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.2, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+	o.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.4);
+	playNoise(0.25, 0.08 * vol);
+}
+
+export function playHarpoonLaunch(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Sharp ascending whistle + rope tension
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'triangle';
+	o.frequency.setValueAtTime(300, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.08);
+	o.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.2);
+	o.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.25, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+	o.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.25);
+	// Rope twang
+	setTimeout(() => {
+		const o2 = ctx.createOscillator();
+		const g2 = ctx.createGain();
+		o2.type = 'sine';
+		o2.frequency.value = 180;
+		o2.connect(g2);
+		g2.connect(ctx.destination);
+		g2.gain.setValueAtTime(vol * 0.12, ctx.currentTime);
+		g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+		o2.start(ctx.currentTime);
+		o2.stop(ctx.currentTime + 0.15);
+	}, 120);
+}
+
+export function playHarpoonHit(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Thud impact
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'triangle';
+	o.frequency.setValueAtTime(120, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.1);
+	o.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.3, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+	o.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.15);
+	playNoise(0.08, 0.1 * vol);
+}
+
+export function playWreckageCreak(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Creaking wood — frequency-modulated sine
+	const o = ctx.createOscillator();
+	const lfo = ctx.createOscillator();
+	const lfoG = ctx.createGain();
+	const g = ctx.createGain();
+	o.type = 'sine';
+	o.frequency.value = 250 + Math.random() * 100;
+	lfo.type = 'sine';
+	lfo.frequency.value = 8 + Math.random() * 4;
+	lfoG.gain.value = 40;
+	lfo.connect(lfoG);
+	lfoG.connect(o.frequency);
+	o.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.06, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+	o.start(ctx.currentTime);
+	lfo.start(ctx.currentTime);
+	o.stop(ctx.currentTime + 0.3);
+	lfo.stop(ctx.currentTime + 0.3);
+}
+
 export function playTreasureMapFound(vol: number = 0.7) {
 	if (!audioCtx) return;
 	ensureAudio();

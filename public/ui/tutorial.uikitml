@@ -50,6 +50,7 @@
   <div class="tip">Q / E - Aim cannons</div>
   <div class="tip">Space / F - Fire cannons</div>
   <div class="tip">Shift - Dash (dodge)</div>
+  <div class="tip">R - Fire harpoon (pulls enemies)</div>
   <div class="tip">ESC / P - Pause</div>
   <div class="divider"></div>
   <div class="section-title">VR CONTROLLERS</div>
@@ -57,6 +58,7 @@
   <div class="tip">Right Stick - Aim cannons</div>
   <div class="tip">Right Trigger - Fire</div>
   <div class="tip">A Button - Dash</div>
+  <div class="tip">B Button - Harpoon</div>
   <div class="tip">Right Grip - Pause</div>
   <div class="divider"></div>
   <div class="section-title">TIPS</div>
@@ -66,7 +68,9 @@
   <div class="tip">Chain kills for combo multiplier</div>
   <div class="tip">Watch for sea mines and whirlpools</div>
   <div class="tip">Collect power-ups from the sea</div>
+  <div class="tip">Harpoon pulls enemies closer for easy hits</div>
   <div class="tip">Boss appears every 5th wave</div>
+  <div class="tip">KRAKEN rises every 10th wave!</div>
   <div class="divider"></div>
   <div class="btn" id="btn-tutorial-back">
     <div class="btn-text">BACK</div>

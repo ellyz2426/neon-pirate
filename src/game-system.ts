@@ -37,6 +37,11 @@ import {
 	createIsland,
 	createSeagull,
 	createRadarBlip,
+	createKrakenTentacle,
+	createKrakenHead,
+	createHarpoon,
+	createRopeSegment,
+	createWreckage,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -64,6 +69,11 @@ import {
 	playWhirlpoolHum,
 	playThunder,
 	playTreasureMapFound,
+	playKrakenRoar,
+	playKrakenSweep,
+	playHarpoonLaunch,
+	playHarpoonHit,
+	playWreckageCreak,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -159,6 +169,43 @@ interface WhirlpoolData {
 	rotationSpeed: number;
 	lifetime: number;
 	maxLifetime: number;
+}
+
+interface KrakenData {
+	headGroup: Group;
+	tentacles: { group: Group; baseAngle: number; sweepPhase: number }[];
+	hp: number;
+	maxHp: number;
+	px: number;
+	pz: number;
+	phase: 'emerge' | 'idle' | 'sweep' | 'ink' | 'submerge';
+	phaseTimer: number;
+	sweepAngle: number;
+	sweepDir: number;
+	emergeProgress: number;
+	attackCooldown: number;
+}
+
+interface HarpoonData {
+	group: Group;
+	vx: number;
+	vz: number;
+	lifetime: number;
+	attached: boolean;
+	attachedEnemy: EnemyData | null;
+	ropeSegments: Mesh[];
+	pullTimer: number;
+}
+
+interface WreckageData {
+	group: Group;
+	px: number;
+	pz: number;
+	bobPhase: number;
+	lifetime: number;
+	rotSpeed: number;
+	driftX: number;
+	driftZ: number;
 }
 
 // Power-up types
@@ -378,6 +425,18 @@ export class GameSystem extends createSystem({}) {
 	private treasureMapZ = 0;
 	private treasureMapTimer = 0;
 	private treasureMapBeacon: Mesh | null = null;
+
+	// Kraken boss
+	private kraken: KrakenData | null = null;
+	private krakenActive = false;
+
+	// Harpoon secondary weapon
+	private harpoon: HarpoonData | null = null;
+	private harpoonCooldown = 0;
+	private prevHarpoonKey = false;
+
+	// Ship wreckage
+	private wreckages: WreckageData[] = [];
 
 	init() {
 		const settings = loadSettings();
@@ -781,6 +840,11 @@ export class GameSystem extends createSystem({}) {
 		} else {
 			this.setWeather('calm');
 		}
+
+		// Kraken encounter on every 10th wave
+		if (this.wave % 10 === 0) {
+			setTimeout(() => this.spawnKraken(), 3000);
+		}
 	}
 
 	private spawnFormation() {
@@ -981,6 +1045,13 @@ export class GameSystem extends createSystem({}) {
 		this.rainParticles = [];
 		// Clean up treasure map
 		this.cleanupTreasureMap();
+		// Clean up kraken
+		this.cleanupKraken();
+		// Clean up harpoon
+		this.cleanupHarpoon();
+		// Clean up wreckage
+		for (const wr of this.wreckages) wr.group.removeFromParent();
+		this.wreckages = [];
 	}
 
 	// ==== SPAWNING ====
@@ -1318,6 +1389,18 @@ export class GameSystem extends createSystem({}) {
 		const dashText = this.dashCooldown > 0 ? `Dash: ${this.dashCooldown.toFixed(1)}s` : 'Dash: Ready';
 		this.hudPanel?.getElementById('hud-dash')?.setProperties({ text: dashText });
 
+		// Harpoon display
+		const harpText = this.harpoon ? 'Harpoon: ACTIVE' :
+			this.harpoonCooldown > 0 ? `Harpoon: ${this.harpoonCooldown.toFixed(1)}s` : 'Harpoon: Ready';
+		this.hudPanel?.getElementById('hud-harpoon')?.setProperties({ text: harpText });
+
+		// Kraken HP
+		if (this.krakenActive && this.kraken) {
+			this.hudPanel?.getElementById('hud-boss')?.setProperties({
+				text: `KRAKEN: ${Math.round((this.kraken.hp / this.kraken.maxHp) * 100)}%`
+			});
+		}
+
 		// Weather / treasure map info
 		if (!this.treasureMapActive) {
 			const weatherNames = { calm: '☀ Calm', cloudy: '☁ Cloudy', storm: '⛈ Storm' };
@@ -1389,6 +1472,14 @@ export class GameSystem extends createSystem({}) {
 		}
 		this.prevPauseKey = pauseKey;
 
+		// Harpoon secondary weapon (right-click or B button)
+		const bButtonDown = rightGamepad?.getButtonDown(InputComponent.B_Button) ?? false;
+		const harpoonKey = this.keys.has('r') || bButtonDown;
+		if (harpoonKey && !this.prevHarpoonKey && this.state === STATE_PLAYING && this.harpoonCooldown <= 0 && !this.harpoon) {
+			this.fireHarpoon();
+		}
+		this.prevHarpoonKey = harpoonKey;
+
 		// Move player ship
 		if (this.state === STATE_PLAYING && this.playerShipGroup) {
 			this.playerMoveX = moveX;
@@ -1452,6 +1543,7 @@ export class GameSystem extends createSystem({}) {
 			}
 
 			if (this.dashCooldown > 0) this.dashCooldown -= delta;
+			if (this.harpoonCooldown > 0) this.harpoonCooldown -= delta;
 
 			// Follow camera
 			this.baseCamPos.x = MathUtils.lerp(this.baseCamPos.x, this.playerShipGroup.position.x, 2 * delta);
@@ -1487,6 +1579,9 @@ export class GameSystem extends createSystem({}) {
 		this.updateSeagulls(delta);
 		this.updateCompass();
 		this.updateTreasureMap(delta);
+		this.updateKraken(delta);
+		this.updateHarpoon(delta);
+		this.updateWreckage(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -1822,6 +1917,16 @@ export class GameSystem extends createSystem({}) {
 		playShipSink(this.volume);
 		this.spawnExplosion(enemy.group.position.x, 1, enemy.group.position.z, 1.5);
 		this.spawnScorePopup(enemy.group.position.x, 2, enemy.group.position.z, points);
+
+		// Spawn wreckage debris
+		const wreckCount = enemy.shipType === EnemyType.ManOWar ? 5 :
+			enemy.shipType === EnemyType.Galleon ? 3 : 2;
+		for (let i = 0; i < wreckCount; i++) {
+			this.spawnWreckage(
+				enemy.group.position.x + (Math.random() - 0.5) * 4,
+				enemy.group.position.z + (Math.random() - 0.5) * 4,
+			);
+		}
 
 		// Treasure drop
 		const treasureValue = enemy.shipType === EnemyType.ManOWar ? 200 :
@@ -2793,6 +2898,548 @@ export class GameSystem extends createSystem({}) {
 		if (this.treasureMapBeacon) {
 			this.treasureMapBeacon.removeFromParent();
 			this.treasureMapBeacon = null;
+		}
+	}
+
+	// ── Kraken Boss ──────────────────────────────────────────────
+	private spawnKraken() {
+		if (this.krakenActive) return;
+		this.krakenActive = true;
+
+		const scheme = getScheme(this.colorScheme);
+		const diffMult = [0.7, 1.0, 1.4][this.difficulty];
+
+		// Choose spawn location away from player
+		let px: number, pz: number;
+		do {
+			px = (Math.random() - 0.5) * 50;
+			pz = (Math.random() - 0.5) * 50;
+		} while (this.playerShipGroup && Math.sqrt(
+			(px - this.playerShipGroup.position.x) ** 2 +
+			(pz - this.playerShipGroup.position.z) ** 2
+		) < 20);
+
+		// Create head
+		const headGroup = createKrakenHead(scheme);
+		headGroup.position.set(px, -6, pz); // Start submerged
+		this.scene.add(headGroup);
+
+		// Create tentacles around the head
+		const tentacles: KrakenData['tentacles'] = [];
+		const tentCount = 6;
+		for (let i = 0; i < tentCount; i++) {
+			const angle = (i / tentCount) * Math.PI * 2;
+			const tGroup = createKrakenTentacle(scheme);
+			const tx = px + Math.cos(angle) * 6;
+			const tz = pz + Math.sin(angle) * 6;
+			tGroup.position.set(tx, -8, tz); // Start submerged
+			tGroup.rotation.y = -angle;
+			this.scene.add(tGroup);
+			tentacles.push({ group: tGroup, baseAngle: angle, sweepPhase: Math.random() * Math.PI * 2 });
+		}
+
+		const maxHp = (500 + this.wave * 30) * diffMult;
+		this.kraken = {
+			headGroup,
+			tentacles,
+			hp: maxHp,
+			maxHp,
+			px,
+			pz,
+			phase: 'emerge',
+			phaseTimer: 0,
+			sweepAngle: 0,
+			sweepDir: 1,
+			emergeProgress: 0,
+			attackCooldown: 0,
+		};
+
+		playKrakenRoar(this.volume);
+		this.showWaveAnnouncement('⚓ THE KRAKEN AWAKENS ⚓');
+		this.shakeIntensity = Math.max(this.shakeIntensity, 2);
+	}
+
+	private updateKraken(delta: number) {
+		if (!this.krakenActive || !this.kraken || !this.playerShipGroup) return;
+		const k = this.kraken;
+		const playerPos = this.playerShipGroup.position;
+
+		k.phaseTimer += delta;
+
+		switch (k.phase) {
+			case 'emerge': {
+				k.emergeProgress = Math.min(1, k.phaseTimer / 3);
+				const targetY = -1;
+				k.headGroup.position.y = -6 + (targetY + 6) * k.emergeProgress;
+				for (const t of k.tentacles) {
+					const tentTargetY = 0;
+					t.group.position.y = -8 + (tentTargetY + 8) * k.emergeProgress;
+				}
+				if (k.emergeProgress >= 1) {
+					k.phase = 'idle';
+					k.phaseTimer = 0;
+				}
+				break;
+			}
+			case 'idle': {
+				// Bob gently, face player
+				k.headGroup.position.y = -1 + Math.sin(this.time * 0.8) * 0.3;
+				const dx = playerPos.x - k.px;
+				const dz = playerPos.z - k.pz;
+				const targetAngle = Math.atan2(dx, dz);
+				k.headGroup.rotation.y = MathUtils.lerp(k.headGroup.rotation.y, targetAngle, delta * 2);
+
+				// Tentacle idle animation
+				for (const t of k.tentacles) {
+					t.sweepPhase += delta * 1.5;
+					const sway = Math.sin(t.sweepPhase) * 0.3;
+					t.group.rotation.z = sway;
+					t.group.position.y = Math.sin(this.time * 0.8 + t.baseAngle) * 0.4;
+					// Tentacle segments wave
+					for (let s = 0; s < t.group.children.length; s++) {
+						const child = t.group.children[s];
+						child.rotation.z = Math.sin(t.sweepPhase + s * 0.4) * 0.15;
+					}
+				}
+
+				// Attack timer
+				k.attackCooldown -= delta;
+				if (k.phaseTimer > 2 && k.attackCooldown <= 0) {
+					// Choose attack
+					const dist = Math.sqrt((dx * dx) + (dz * dz));
+					if (dist < 25) {
+						k.phase = 'sweep';
+					} else {
+						k.phase = 'ink';
+					}
+					k.phaseTimer = 0;
+					k.attackCooldown = 4 + Math.random() * 2;
+				}
+				break;
+			}
+			case 'sweep': {
+				// Tentacles sweep across — damages player if hit
+				playKrakenSweep(this.volume * 0.5);
+				const sweepDuration = 2;
+				const progress = Math.min(1, k.phaseTimer / sweepDuration);
+
+				for (const t of k.tentacles) {
+					// Extend tentacles outward during sweep
+					const extendFactor = Math.sin(progress * Math.PI);
+					const angle = t.baseAngle + Math.sin(progress * Math.PI * 2 + t.sweepPhase) * 0.8;
+					const reach = 6 + extendFactor * 8;
+					t.group.position.x = k.px + Math.cos(angle) * reach;
+					t.group.position.z = k.pz + Math.sin(angle) * reach;
+					t.group.rotation.y = -angle;
+					// Whip motion
+					for (let s = 0; s < t.group.children.length; s++) {
+						const child = t.group.children[s];
+						child.rotation.z = Math.sin(progress * Math.PI * 3 + s * 0.6) * 0.4 * extendFactor;
+					}
+
+					// Check tentacle hit on player
+					const tx = t.group.position.x;
+					const tz = t.group.position.z;
+					const hitDist = Math.sqrt((playerPos.x - tx) ** 2 + (playerPos.z - tz) ** 2);
+					if (hitDist < 4 && !this.dashInvincible && !this.hasPowerUp(PU_SHIELD) && extendFactor > 0.3) {
+						this.playerHp -= delta * 30;
+						this.damageFlashTimer = 0.2;
+						this.shakeIntensity = Math.max(this.shakeIntensity, 0.5);
+					}
+				}
+
+				if (progress >= 1) {
+					k.phase = 'idle';
+					k.phaseTimer = 0;
+				}
+				break;
+			}
+			case 'ink': {
+				// Ink cloud — spawns dark patches that slow the player
+				if (k.phaseTimer < 0.1) {
+					// Spawn ink clouds toward the player
+					const dx = playerPos.x - k.px;
+					const dz = playerPos.z - k.pz;
+					const dist = Math.sqrt(dx * dx + dz * dz);
+					if (dist > 0.1) {
+						for (let i = 0; i < 3; i++) {
+							const spread = (Math.random() - 0.5) * 15;
+							const inkX = k.px + (dx / dist) * (10 + i * 8) + spread;
+							const inkZ = k.pz + (dz / dist) * (10 + i * 8) + spread;
+							this.spawnInkCloud(inkX, inkZ);
+						}
+					}
+					playKrakenRoar(this.volume * 0.3);
+				}
+
+				if (k.phaseTimer > 1.5) {
+					k.phase = 'idle';
+					k.phaseTimer = 0;
+				}
+				break;
+			}
+			case 'submerge': {
+				const progress = Math.min(1, k.phaseTimer / 2);
+				k.headGroup.position.y = -1 - progress * 6;
+				for (const t of k.tentacles) {
+					t.group.position.y = 0 - progress * 8;
+				}
+				if (progress >= 1) {
+					this.cleanupKraken();
+				}
+				break;
+			}
+		}
+
+		// Check cannonball hits on kraken head
+		if (k.phase !== 'emerge' && k.phase !== 'submerge') {
+			for (let i = this.cannonballs.length - 1; i >= 0; i--) {
+				const ball = this.cannonballs[i];
+				if (ball.isEnemy) continue;
+				const dx = ball.mesh.position.x - k.headGroup.position.x;
+				const dz = ball.mesh.position.z - k.headGroup.position.z;
+				const dist = Math.sqrt(dx * dx + dz * dz);
+				if (dist < 4 && ball.mesh.position.y < 4) {
+					k.hp -= ball.damage;
+					playHit(this.volume);
+					this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.5);
+					ball.mesh.removeFromParent();
+					for (const tr of ball.trail) tr.removeFromParent();
+					this.cannonballs.splice(i, 1);
+
+					if (k.hp <= 0) {
+						this.defeatKraken();
+						return;
+					}
+				}
+			}
+
+			// Also check hits on tentacles
+			for (const t of k.tentacles) {
+				for (let i = this.cannonballs.length - 1; i >= 0; i--) {
+					const ball = this.cannonballs[i];
+					if (ball.isEnemy) continue;
+					const dx = ball.mesh.position.x - t.group.position.x;
+					const dz = ball.mesh.position.z - t.group.position.z;
+					const dist = Math.sqrt(dx * dx + dz * dz);
+					if (dist < 2 && ball.mesh.position.y < 6) {
+						k.hp -= ball.damage * 0.5; // Half damage on tentacles
+						this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.3);
+						ball.mesh.removeFromParent();
+						for (const tr of ball.trail) tr.removeFromParent();
+						this.cannonballs.splice(i, 1);
+
+						if (k.hp <= 0) {
+							this.defeatKraken();
+							return;
+						}
+					}
+				}
+			}
+		}
+
+		// HP bar update via HUD (already handled in updateHUD)
+	}
+
+	private defeatKraken() {
+		if (!this.kraken) return;
+		const k = this.kraken;
+
+		// Massive explosion chain
+		for (let i = 0; i < 8; i++) {
+			const ex = k.px + (Math.random() - 0.5) * 12;
+			const ez = k.pz + (Math.random() - 0.5) * 12;
+			setTimeout(() => {
+				this.spawnExplosion(ex, Math.random() * 4, ez, 1.5 + Math.random());
+				playExplosion(this.volume);
+			}, i * 250);
+		}
+
+		// Big score reward
+		const points = 2000 + this.wave * 100;
+		this.score += points;
+		this.spawnScorePopup(k.px, 5, k.pz, points);
+
+		// Treasure rain
+		for (let i = 0; i < 8; i++) {
+			this.spawnTreasure(
+				k.px + (Math.random() - 0.5) * 10,
+				k.pz + (Math.random() - 0.5) * 10,
+				100 + this.wave * 15,
+			);
+		}
+
+		playKrakenRoar(this.volume);
+		this.shakeIntensity = Math.max(this.shakeIntensity, 3);
+		this.showWaveAnnouncement('⚓ KRAKEN DEFEATED! ⚓');
+
+		// Submerge and clean up
+		k.phase = 'submerge';
+		k.phaseTimer = 0;
+	}
+
+	private spawnInkCloud(x: number, z: number) {
+		// Ink cloud is a dark expanding sphere that fades
+		const cloud = new Mesh(
+			new SphereGeometry(1.5, 8, 6),
+			new MeshStandardMaterial({
+				color: '#110022',
+				emissive: '#220044',
+				emissiveIntensity: 0.3,
+				transparent: true,
+				opacity: 0.5,
+			}),
+		);
+		cloud.position.set(x, 0.3, z);
+		this.scene.add(cloud);
+
+		// Treat as a special wreckage-like obstacle that damages on contact
+		this.wreckages.push({
+			group: new Group(), // placeholder
+			px: x,
+			pz: z,
+			bobPhase: 0,
+			lifetime: 8, // Longer-lived
+			rotSpeed: 0,
+			driftX: 0,
+			driftZ: 0,
+		});
+		// Attach the cloud mesh to the wreckage group
+		const wrapper = this.wreckages[this.wreckages.length - 1];
+		wrapper.group.add(cloud);
+		wrapper.group.position.set(x, 0.3, z);
+		this.scene.add(wrapper.group);
+		cloud.position.set(0, 0, 0);
+	}
+
+	private cleanupKraken() {
+		if (!this.kraken) return;
+		this.kraken.headGroup.removeFromParent();
+		for (const t of this.kraken.tentacles) {
+			t.group.removeFromParent();
+		}
+		this.kraken = null;
+		this.krakenActive = false;
+	}
+
+	// ── Harpoon Secondary Weapon ──────────────────────────────────
+	private fireHarpoon() {
+		if (!this.playerShipGroup) return;
+		this.harpoonCooldown = 5; // 5 second cooldown
+
+		const scheme = getScheme(this.colorScheme);
+		playHarpoonLaunch(this.volume);
+
+		const harpGroup = createHarpoon(scheme);
+		const px = this.playerShipGroup.position.x + Math.sin(this.aimAngleH) * 3;
+		const pz = this.playerShipGroup.position.z - Math.cos(this.aimAngleH) * 3;
+		harpGroup.position.set(px, 1.5, pz);
+		harpGroup.rotation.y = this.aimAngleH;
+		this.scene.add(harpGroup);
+
+		const speed = 30;
+		const vx = Math.sin(this.aimAngleH) * speed;
+		const vz = -Math.cos(this.aimAngleH) * speed;
+
+		// Create rope segments
+		const ropeSegs: Mesh[] = [];
+		for (let i = 0; i < 20; i++) {
+			const seg = createRopeSegment();
+			seg.position.set(px, 1.5, pz);
+			this.scene.add(seg);
+			ropeSegs.push(seg);
+		}
+
+		this.harpoon = {
+			group: harpGroup,
+			vx,
+			vz,
+			lifetime: 0,
+			attached: false,
+			attachedEnemy: null,
+			ropeSegments: ropeSegs,
+			pullTimer: 0,
+		};
+	}
+
+	private updateHarpoon(delta: number) {
+		if (!this.harpoon || !this.playerShipGroup) return;
+		const h = this.harpoon;
+		h.lifetime += delta;
+
+		if (!h.attached) {
+			// Flying phase
+			h.group.position.x += h.vx * delta;
+			h.group.position.z += h.vz * delta;
+
+			// Check hit on enemies
+			for (const enemy of this.enemies) {
+				if (enemy.isSinking) continue;
+				const dx = h.group.position.x - enemy.group.position.x;
+				const dz = h.group.position.z - enemy.group.position.z;
+				const dist = Math.sqrt(dx * dx + dz * dz);
+				if (dist < enemy.hullWidth) {
+					// Attach!
+					h.attached = true;
+					h.attachedEnemy = enemy;
+					h.pullTimer = 3; // 3 seconds of pulling
+					playHarpoonHit(this.volume);
+					enemy.hp -= this.cannonDamage * 0.5; // Small damage on attach
+					this.spawnScorePopup(enemy.group.position.x, 3, enemy.group.position.z, 50);
+					this.score += 50;
+					break;
+				}
+			}
+
+			// Check hit on kraken head
+			if (!h.attached && this.krakenActive && this.kraken) {
+				const dx = h.group.position.x - this.kraken.headGroup.position.x;
+				const dz = h.group.position.z - this.kraken.headGroup.position.z;
+				if (Math.sqrt(dx * dx + dz * dz) < 4) {
+					h.attached = true;
+					h.pullTimer = 2;
+					playHarpoonHit(this.volume);
+					this.kraken.hp -= this.cannonDamage;
+					if (this.kraken.hp <= 0) {
+						this.defeatKraken();
+					}
+				}
+			}
+
+			// Max range
+			if (h.lifetime > 1.5) {
+				this.cleanupHarpoon();
+				return;
+			}
+		} else {
+			// Pulling phase
+			h.pullTimer -= delta;
+
+			if (h.attachedEnemy) {
+				if (h.attachedEnemy.isSinking || h.pullTimer <= 0) {
+					this.cleanupHarpoon();
+					return;
+				}
+
+				// Pull enemy toward player
+				const ex = h.attachedEnemy.group.position.x;
+				const ez = h.attachedEnemy.group.position.z;
+				const px = this.playerShipGroup.position.x;
+				const pz = this.playerShipGroup.position.z;
+				const dx = px - ex;
+				const dz = pz - ez;
+				const dist = Math.sqrt(dx * dx + dz * dz);
+				if (dist > 5) {
+					const pullSpeed = 6;
+					h.attachedEnemy.group.position.x += (dx / dist) * pullSpeed * delta;
+					h.attachedEnemy.group.position.z += (dz / dist) * pullSpeed * delta;
+				}
+
+				// Keep harpoon on enemy
+				h.group.position.set(ex, 1.5, ez);
+			} else {
+				// Attached to kraken or nothing — just expire
+				if (h.pullTimer <= 0) {
+					this.cleanupHarpoon();
+					return;
+				}
+			}
+		}
+
+		// Update rope segments — line from player to harpoon
+		const px = this.playerShipGroup.position.x;
+		const pz = this.playerShipGroup.position.z;
+		const hx = h.group.position.x;
+		const hz = h.group.position.z;
+		for (let i = 0; i < h.ropeSegments.length; i++) {
+			const t = i / (h.ropeSegments.length - 1);
+			const sag = Math.sin(t * Math.PI) * 0.3; // Slight sag
+			h.ropeSegments[i].position.set(
+				px + (hx - px) * t,
+				1.5 - sag,
+				pz + (hz - pz) * t,
+			);
+		}
+	}
+
+	private cleanupHarpoon() {
+		if (!this.harpoon) return;
+		this.harpoon.group.removeFromParent();
+		for (const seg of this.harpoon.ropeSegments) seg.removeFromParent();
+		this.harpoon = null;
+	}
+
+	// ── Ship Wreckage ──────────────────────────────────────────────
+	private spawnWreckage(x: number, z: number) {
+		const group = createWreckage();
+		group.position.set(x, 0.15, z);
+		group.rotation.y = Math.random() * Math.PI * 2;
+		this.scene.add(group);
+		this.wreckages.push({
+			group,
+			px: x,
+			pz: z,
+			bobPhase: Math.random() * Math.PI * 2,
+			lifetime: 25 + Math.random() * 10,
+			rotSpeed: (Math.random() - 0.5) * 0.3,
+			driftX: (Math.random() - 0.5) * 0.3,
+			driftZ: (Math.random() - 0.5) * 0.3,
+		});
+
+		if (Math.random() < 0.15) {
+			playWreckageCreak(this.volume * 0.3);
+		}
+	}
+
+	private updateWreckage(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+
+		for (let i = this.wreckages.length - 1; i >= 0; i--) {
+			const wr = this.wreckages[i];
+			wr.lifetime -= delta;
+			wr.bobPhase += delta * 1.2;
+
+			// Drift and bob
+			wr.px += wr.driftX * delta;
+			wr.pz += wr.driftZ * delta;
+			wr.group.position.set(wr.px, 0.15 + Math.sin(wr.bobPhase) * 0.08, wr.pz);
+			wr.group.rotation.y += wr.rotSpeed * delta;
+
+			// Fade out near end of life
+			if (wr.lifetime < 3) {
+				const fade = wr.lifetime / 3;
+				for (const child of wr.group.children) {
+					const mat = (child as Mesh).material;
+					if (mat && 'opacity' in mat) {
+						(mat as MeshStandardMaterial).transparent = true;
+						(mat as MeshStandardMaterial).opacity = fade;
+					}
+				}
+			}
+
+			// Slow player slightly if they collide
+			const dx = playerPos.x - wr.px;
+			const dz = playerPos.z - wr.pz;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < 2 && !this.isDashing) {
+				// Gentle push and slow
+				playerPos.x += (dx / dist) * 0.5 * delta;
+				playerPos.z += (dz / dist) * 0.5 * delta;
+				// Occasional creak
+				if (Math.random() < 0.005) playWreckageCreak(this.volume * 0.2);
+			}
+
+			if (wr.lifetime <= 0) {
+				wr.group.removeFromParent();
+				this.wreckages.splice(i, 1);
+			}
+		}
+
+		// Cap wreckage count
+		while (this.wreckages.length > 30) {
+			this.wreckages[0].group.removeFromParent();
+			this.wreckages.shift();
 		}
 	}
 }

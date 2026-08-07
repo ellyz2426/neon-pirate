@@ -61,6 +61,7 @@
   <div class="label" id="hud-powerups"></div>
   <div class="row">
     <div class="label" id="hud-dash"></div>
-    <div class="weather" id="hud-weather"></div>
+    <div class="label" id="hud-harpoon"></div>
   </div>
+  <div class="weather" id="hud-weather"></div>
 </Panel>
