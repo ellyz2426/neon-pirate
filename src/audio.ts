@@ -1,0 +1,177 @@
+// Audio system for Neon Pirate VR
+const audioCtx = typeof AudioContext !== 'undefined' ? new AudioContext() : null;
+
+function ensureAudio() {
+	if (audioCtx && audioCtx.state === 'suspended') {
+		audioCtx.resume();
+	}
+}
+
+function playTone(freq: number, duration: number, type: OscillatorType = 'square', volume: number = 0.15, detune: number = 0) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const osc = audioCtx.createOscillator();
+	const gain = audioCtx.createGain();
+	osc.type = type;
+	osc.frequency.value = freq;
+	osc.detune.value = detune;
+	gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+	gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+	osc.connect(gain);
+	gain.connect(audioCtx.destination);
+	osc.start();
+	osc.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration: number, volume: number = 0.1) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const bufferSize = audioCtx.sampleRate * duration;
+	const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+	const data = buffer.getChannelData(0);
+	for (let i = 0; i < bufferSize; i++) {
+		data[i] = (Math.random() * 2 - 1) * volume;
+	}
+	const source = audioCtx.createBufferSource();
+	const gain = audioCtx.createGain();
+	source.buffer = buffer;
+	gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+	gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+	source.connect(gain);
+	gain.connect(audioCtx.destination);
+	source.start();
+}
+
+export function playCannonFire(vol: number = 0.7) {
+	playNoise(0.3, 0.15 * vol);
+	playTone(80, 0.15, 'sawtooth', 0.12 * vol);
+	playTone(60, 0.2, 'triangle', 0.08 * vol, -10);
+	setTimeout(() => playNoise(0.2, 0.08 * vol), 50);
+}
+
+export function playExplosion(vol: number = 0.7) {
+	playNoise(0.5, 0.2 * vol);
+	playTone(50, 0.3, 'sawtooth', 0.15 * vol);
+	playTone(30, 0.4, 'triangle', 0.1 * vol);
+	setTimeout(() => playNoise(0.3, 0.12 * vol), 100);
+	setTimeout(() => playTone(40, 0.2, 'sawtooth', 0.08 * vol), 150);
+}
+
+export function playEnemyFire(vol: number = 0.7) {
+	playTone(100, 0.1, 'square', 0.08 * vol);
+	playNoise(0.15, 0.06 * vol);
+}
+
+export function playTreasureCollect(vol: number = 0.7) {
+	playTone(880, 0.1, 'sine', 0.12 * vol);
+	setTimeout(() => playTone(1100, 0.1, 'sine', 0.12 * vol), 80);
+	setTimeout(() => playTone(1320, 0.15, 'sine', 0.1 * vol), 160);
+}
+
+export function playSplash(vol: number = 0.7) {
+	playNoise(0.2, 0.06 * vol);
+	playTone(200, 0.1, 'sine', 0.05 * vol);
+}
+
+export function playHit(vol: number = 0.7) {
+	playTone(150, 0.08, 'square', 0.1 * vol);
+	playTone(100, 0.12, 'sawtooth', 0.08 * vol);
+	playNoise(0.1, 0.06 * vol);
+}
+
+export function playShipSink(vol: number = 0.7) {
+	playTone(200, 0.3, 'sawtooth', 0.1 * vol);
+	setTimeout(() => playTone(150, 0.3, 'sawtooth', 0.08 * vol), 200);
+	setTimeout(() => playTone(100, 0.4, 'sawtooth', 0.06 * vol), 400);
+	setTimeout(() => playNoise(0.4, 0.08 * vol), 300);
+}
+
+export function playWaveComplete(vol: number = 0.7) {
+	const notes = [523, 659, 784, 1047];
+	notes.forEach((n, i) => {
+		setTimeout(() => playTone(n, 0.2, 'triangle', 0.1 * vol), i * 120);
+	});
+}
+
+export function playGameOver(vol: number = 0.7) {
+	const notes = [440, 392, 349, 262];
+	notes.forEach((n, i) => {
+		setTimeout(() => playTone(n, 0.3, 'triangle', 0.1 * vol), i * 200);
+	});
+}
+
+export function playMenuSelect(vol: number = 0.7) {
+	playTone(660, 0.08, 'sine', 0.08 * vol);
+}
+
+export function playUpgrade(vol: number = 0.7) {
+	playTone(440, 0.1, 'sine', 0.1 * vol);
+	setTimeout(() => playTone(660, 0.1, 'sine', 0.1 * vol), 100);
+	setTimeout(() => playTone(880, 0.15, 'sine', 0.08 * vol), 200);
+}
+
+export function playMineExplode(vol: number = 0.7) {
+	playNoise(0.6, 0.25 * vol);
+	playTone(40, 0.4, 'sawtooth', 0.15 * vol);
+	playTone(25, 0.5, 'triangle', 0.12 * vol);
+}
+
+export function playCombo(combo: number, vol: number = 0.7) {
+	const baseFreq = 400 + combo * 80;
+	playTone(baseFreq, 0.08, 'sine', 0.08 * vol);
+	setTimeout(() => playTone(baseFreq * 1.25, 0.1, 'sine', 0.08 * vol), 60);
+}
+
+// Music engine
+let musicInterval: ReturnType<typeof setInterval> | null = null;
+let musicPlaying = false;
+
+export function startMusic(vol: number = 0.7, bpm: number = 100) {
+	if (musicPlaying) return;
+	musicPlaying = true;
+	const beatMs = 60000 / bpm;
+	let beat = 0;
+
+	// Sea shanty-inspired procedural music
+	const bassLine = [65, 82, 98, 82, 65, 73, 87, 73]; // C2-ish progression
+	const melodyLine = [262, 330, 392, 330, 262, 294, 349, 294];
+
+	musicInterval = setInterval(() => {
+		if (!musicPlaying) return;
+		const bassNote = bassLine[beat % bassLine.length];
+		const melNote = melodyLine[beat % melodyLine.length];
+
+		// Bass on every beat
+		playTone(bassNote, beatMs / 1000 * 0.8, 'triangle', 0.04 * vol);
+
+		// Melody on every other beat
+		if (beat % 2 === 0) {
+			playTone(melNote, beatMs / 1000 * 0.6, 'square', 0.025 * vol);
+		}
+
+		// Percussion
+		if (beat % 4 === 0) {
+			playNoise(0.05, 0.03 * vol);
+		}
+		if (beat % 4 === 2) {
+			playTone(200, 0.03, 'square', 0.02 * vol);
+		}
+
+		beat++;
+	}, beatMs / 2);
+}
+
+export function stopMusic() {
+	musicPlaying = false;
+	if (musicInterval) {
+		clearInterval(musicInterval);
+		musicInterval = null;
+	}
+}
+
+export function setBPM(bpm: number, vol: number = 0.7) {
+	if (musicPlaying) {
+		stopMusic();
+		startMusic(vol, bpm);
+	}
+}

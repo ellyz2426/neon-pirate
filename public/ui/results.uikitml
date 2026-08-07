@@ -1,0 +1,75 @@
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 10;
+    background-color: rgba(0, 8, 20, 0.94);
+    border-radius: 14;
+    width: 420;
+    border-color: rgba(255, 170, 0, 0.5);
+    border-width: 2;
+  }
+  .title {
+    font-size: 28;
+    color: #ff3344;
+  }
+  .highscore {
+    font-size: 16;
+    color: #ffaa00;
+  }
+  .stat {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.8);
+  }
+  .divider {
+    width: 380;
+    height: 1;
+    background-color: rgba(255, 170, 0, 0.2);
+  }
+  .lb-title {
+    font-size: 16;
+    color: #00ffff;
+  }
+  .lb-entry {
+    font-size: 12;
+    color: rgba(0, 200, 255, 0.7);
+  }
+  .btn {
+    padding: 10;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 8;
+    width: 280;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-text {
+    font-size: 16;
+    color: #00ffff;
+  }
+</style>
+<Panel class="root">
+  <div class="title">SHIP SUNK!</div>
+  <div class="highscore" id="result-highscore">Best: 0</div>
+  <div class="divider"></div>
+  <div class="stat" id="result-score">Score: 0</div>
+  <div class="stat" id="result-wave">Wave: 1</div>
+  <div class="stat" id="result-kills">Kills: 0</div>
+  <div class="stat" id="result-gold">Gold: 0</div>
+  <div class="divider"></div>
+  <div class="lb-title">LEADERBOARD</div>
+  <div class="lb-entry" id="lb-0">#1 ---</div>
+  <div class="lb-entry" id="lb-1">#2 ---</div>
+  <div class="lb-entry" id="lb-2">#3 ---</div>
+  <div class="lb-entry" id="lb-3">#4 ---</div>
+  <div class="lb-entry" id="lb-4">#5 ---</div>
+  <div class="divider"></div>
+  <div class="btn" id="btn-retry">
+    <div class="btn-text">SET SAIL AGAIN</div>
+  </div>
+  <div class="btn" id="btn-results-menu">
+    <div class="btn-text">MAIN MENU</div>
+  </div>
+</Panel>

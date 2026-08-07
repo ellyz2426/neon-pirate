@@ -1,0 +1,404 @@
+import {
+	BoxGeometry,
+	CylinderGeometry,
+	ConeGeometry,
+	SphereGeometry,
+	Mesh,
+	MeshStandardMaterial,
+	Group,
+	PlaneGeometry,
+	DoubleSide,
+	AdditiveBlending,
+	Color,
+	FogExp2,
+	Vector3,
+	MathUtils,
+} from '@iwsdk/core';
+
+// Color schemes
+export const COLOR_SCHEMES = [
+	{ name: 'Cyan', primary: '#00ffff', secondary: '#0088ff', accent: '#ff00ff', water: '#001830', hull: '#1a3a4a' },
+	{ name: 'Gold', primary: '#ffaa00', secondary: '#ff6600', accent: '#ffff00', water: '#1a1000', hull: '#4a3a1a' },
+	{ name: 'Green', primary: '#00ff88', secondary: '#00cc44', accent: '#88ff00', water: '#001810', hull: '#1a4a2a' },
+	{ name: 'Red', primary: '#ff3344', secondary: '#ff0066', accent: '#ff8800', water: '#180008', hull: '#4a1a1a' },
+];
+
+export function getScheme(idx: number) {
+	return COLOR_SCHEMES[idx % COLOR_SCHEMES.length];
+}
+
+// Build player ship geometry
+export function createPlayerShip(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const ship = new Group();
+	const primary = new Color(scheme.primary);
+	const secondary = new Color(scheme.secondary);
+	const accent = new Color(scheme.accent);
+	const hullColor = new Color(scheme.hull);
+
+	// Hull - elongated box
+	const hullGeo = new BoxGeometry(3, 1.2, 8);
+	const hullMat = new MeshStandardMaterial({ color: hullColor, emissive: primary, emissiveIntensity: 0.15 });
+	const hull = new Mesh(hullGeo, hullMat);
+	hull.position.y = 0.6;
+	ship.add(hull);
+
+	// Bow (front) - cone
+	const bowGeo = new ConeGeometry(1.5, 3, 4);
+	const bowMat = new MeshStandardMaterial({ color: hullColor, emissive: primary, emissiveIntensity: 0.2 });
+	const bow = new Mesh(bowGeo, bowMat);
+	bow.rotation.x = Math.PI / 2;
+	bow.position.set(0, 0.6, -5.5);
+	ship.add(bow);
+
+	// Stern raised section
+	const sternGeo = new BoxGeometry(2.8, 1.5, 2.5);
+	const sternMat = new MeshStandardMaterial({ color: hullColor, emissive: secondary, emissiveIntensity: 0.2 });
+	const stern = new Mesh(sternGeo, sternMat);
+	stern.position.set(0, 1.6, 3.5);
+	ship.add(stern);
+
+	// Mast
+	const mastGeo = new CylinderGeometry(0.08, 0.1, 6, 8);
+	const mastMat = new MeshStandardMaterial({ color: '#553322', emissive: secondary, emissiveIntensity: 0.1 });
+	const mast = new Mesh(mastGeo, mastMat);
+	mast.position.set(0, 4, -0.5);
+	ship.add(mast);
+
+	// Sail (plane)
+	const sailGeo = new PlaneGeometry(3.5, 3);
+	const sailMat = new MeshStandardMaterial({
+		color: '#111111',
+		emissive: accent,
+		emissiveIntensity: 0.3,
+		side: DoubleSide,
+		transparent: true,
+		opacity: 0.8,
+	});
+	const sail = new Mesh(sailGeo, sailMat);
+	sail.position.set(0, 4.5, -0.5);
+	ship.add(sail);
+
+	// Crow's nest
+	const nestGeo = new CylinderGeometry(0.4, 0.3, 0.3, 8);
+	const nestMat = new MeshStandardMaterial({ color: '#332211', emissive: primary, emissiveIntensity: 0.3 });
+	const nest = new Mesh(nestGeo, nestMat);
+	nest.position.set(0, 7, -0.5);
+	ship.add(nest);
+
+	// Cannons (port side - left)
+	for (let i = 0; i < 3; i++) {
+		const cannonGroup = createCannon(primary);
+		cannonGroup.position.set(-1.6, 0.8, -2 + i * 2);
+		cannonGroup.rotation.y = Math.PI / 2;
+		ship.add(cannonGroup);
+	}
+
+	// Cannons (starboard side - right)
+	for (let i = 0; i < 3; i++) {
+		const cannonGroup = createCannon(primary);
+		cannonGroup.position.set(1.6, 0.8, -2 + i * 2);
+		cannonGroup.rotation.y = -Math.PI / 2;
+		ship.add(cannonGroup);
+	}
+
+	// Neon trim lines
+	const trimGeo = new BoxGeometry(3.1, 0.05, 8.1);
+	const trimMat = new MeshStandardMaterial({ color: primary, emissive: primary, emissiveIntensity: 1.0 });
+	const trimTop = new Mesh(trimGeo, trimMat);
+	trimTop.position.y = 1.2;
+	ship.add(trimTop);
+	const trimBot = new Mesh(trimGeo.clone(), trimMat);
+	trimBot.position.y = 0.05;
+	ship.add(trimBot);
+
+	// Jolly Roger flag
+	const flagGeo = new PlaneGeometry(0.8, 0.6);
+	const flagMat = new MeshStandardMaterial({
+		color: '#000000',
+		emissive: primary,
+		emissiveIntensity: 0.5,
+		side: DoubleSide,
+	});
+	const flag = new Mesh(flagGeo, flagMat);
+	flag.position.set(0, 7.3, -0.5);
+	ship.add(flag);
+
+	// Lanterns at bow and stern
+	const lanternGeo = new SphereGeometry(0.15, 8, 8);
+	const lanternMat = new MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 2.0 });
+	const lanternBow = new Mesh(lanternGeo, lanternMat);
+	lanternBow.position.set(0, 1.5, -6.5);
+	ship.add(lanternBow);
+	const lanternStern = new Mesh(lanternGeo.clone(), lanternMat);
+	lanternStern.position.set(0, 2.5, 4.5);
+	ship.add(lanternStern);
+
+	return ship;
+}
+
+function createCannon(color: Color): Group {
+	const g = new Group();
+	const barrelGeo = new CylinderGeometry(0.12, 0.15, 1.2, 8);
+	const barrelMat = new MeshStandardMaterial({ color: '#333333', emissive: color, emissiveIntensity: 0.3 });
+	const barrel = new Mesh(barrelGeo, barrelMat);
+	barrel.rotation.z = Math.PI / 2;
+	g.add(barrel);
+	const baseGeo = new BoxGeometry(0.3, 0.2, 0.4);
+	const base = new Mesh(baseGeo, barrelMat);
+	base.position.y = -0.15;
+	g.add(base);
+	return g;
+}
+
+// Enemy ship types
+export enum EnemyType {
+	Sloop = 0,       // Fast, weak
+	Brigantine = 1,  // Medium
+	Galleon = 2,     // Slow, tough
+	ManOWar = 3,     // Boss
+}
+
+export function createEnemyShip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]): Group {
+	const ship = new Group();
+	const enemyRed = new Color('#ff2222');
+	const enemyDark = new Color('#331111');
+
+	let hullW = 2, hullH = 0.8, hullL = 5;
+	let mastH = 4;
+
+	switch (type) {
+		case EnemyType.Sloop:
+			hullW = 1.8; hullH = 0.7; hullL = 4; mastH = 3.5;
+			break;
+		case EnemyType.Brigantine:
+			hullW = 2.5; hullH = 1; hullL = 6; mastH = 5;
+			break;
+		case EnemyType.Galleon:
+			hullW = 3; hullH = 1.3; hullL = 8; mastH = 6;
+			break;
+		case EnemyType.ManOWar:
+			hullW = 4; hullH = 1.8; hullL = 12; mastH = 8;
+			break;
+	}
+
+	// Hull
+	const hullGeo = new BoxGeometry(hullW, hullH, hullL);
+	const hullMat = new MeshStandardMaterial({ color: enemyDark, emissive: enemyRed, emissiveIntensity: 0.2 });
+	const hull = new Mesh(hullGeo, hullMat);
+	hull.position.y = hullH / 2;
+	ship.add(hull);
+
+	// Bow
+	const bowGeo = new ConeGeometry(hullW / 2, hullL * 0.3, 4);
+	const bowMat = new MeshStandardMaterial({ color: enemyDark, emissive: enemyRed, emissiveIntensity: 0.25 });
+	const bow = new Mesh(bowGeo, bowMat);
+	bow.rotation.x = Math.PI / 2;
+	bow.position.set(0, hullH / 2, -(hullL / 2 + hullL * 0.15));
+	ship.add(bow);
+
+	// Mast
+	const mastGeo = new CylinderGeometry(0.06, 0.08, mastH, 8);
+	const mastMat = new MeshStandardMaterial({ color: '#442211', emissive: enemyRed, emissiveIntensity: 0.1 });
+	const mast = new Mesh(mastGeo, mastMat);
+	mast.position.set(0, hullH + mastH / 2, 0);
+	ship.add(mast);
+
+	// Sail
+	const sailGeo = new PlaneGeometry(hullW * 1.2, mastH * 0.6);
+	const sailMat = new MeshStandardMaterial({
+		color: '#220000',
+		emissive: enemyRed,
+		emissiveIntensity: 0.4,
+		side: DoubleSide,
+		transparent: true,
+		opacity: 0.7,
+	});
+	const sail = new Mesh(sailGeo, sailMat);
+	sail.position.set(0, hullH + mastH * 0.6, 0);
+	ship.add(sail);
+
+	// Red neon trim
+	const trimGeo = new BoxGeometry(hullW + 0.1, 0.04, hullL + 0.1);
+	const trimMat = new MeshStandardMaterial({ color: enemyRed, emissive: enemyRed, emissiveIntensity: 1.0 });
+	const trim = new Mesh(trimGeo, trimMat);
+	trim.position.y = hullH;
+	ship.add(trim);
+
+	// HP bar (will be scaled by enemy system)
+	const hpBarBg = new Mesh(
+		new BoxGeometry(hullW * 0.8, 0.12, 0.04),
+		new MeshStandardMaterial({ color: '#330000', emissive: '#330000', emissiveIntensity: 0.3 })
+	);
+	hpBarBg.position.set(0, hullH + mastH + 0.5, 0);
+	hpBarBg.name = 'hp-bar-bg';
+	ship.add(hpBarBg);
+
+	const hpBar = new Mesh(
+		new BoxGeometry(hullW * 0.8, 0.1, 0.05),
+		new MeshStandardMaterial({ color: '#ff0000', emissive: '#ff0000', emissiveIntensity: 1.0 })
+	);
+	hpBar.position.set(0, hullH + mastH + 0.5, 0.01);
+	hpBar.name = 'hp-bar';
+	ship.add(hpBar);
+
+	// Cannons for enemy ships
+	const cannonCount = type === EnemyType.ManOWar ? 5 : type === EnemyType.Galleon ? 3 : type === EnemyType.Brigantine ? 2 : 1;
+	for (let i = 0; i < cannonCount; i++) {
+		const zOffset = -hullL / 2 + hullL * (i + 1) / (cannonCount + 1);
+		const cannonL = createCannon(enemyRed);
+		cannonL.position.set(-hullW / 2 - 0.2, hullH * 0.7, zOffset);
+		cannonL.rotation.y = Math.PI / 2;
+		ship.add(cannonL);
+		const cannonR = createCannon(enemyRed);
+		cannonR.position.set(hullW / 2 + 0.2, hullH * 0.7, zOffset);
+		cannonR.rotation.y = -Math.PI / 2;
+		ship.add(cannonR);
+	}
+
+	return ship;
+}
+
+export function createCannonball(isEnemy: boolean, scheme: typeof COLOR_SCHEMES[0]): Mesh {
+	const geo = new SphereGeometry(0.2, 8, 8);
+	const color = isEnemy ? '#ff3333' : scheme.primary;
+	const mat = new MeshStandardMaterial({
+		color,
+		emissive: color,
+		emissiveIntensity: 1.5,
+	});
+	return new Mesh(geo, mat);
+}
+
+export function createTreasure(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Chest body
+	const chestGeo = new BoxGeometry(0.6, 0.4, 0.4);
+	const chestMat = new MeshStandardMaterial({
+		color: '#886622',
+		emissive: scheme.accent,
+		emissiveIntensity: 0.5,
+	});
+	const chest = new Mesh(chestGeo, chestMat);
+	g.add(chest);
+
+	// Gold glow on top
+	const glowGeo = new SphereGeometry(0.2, 8, 8);
+	const glowMat = new MeshStandardMaterial({
+		color: '#ffdd00',
+		emissive: '#ffdd00',
+		emissiveIntensity: 2.0,
+	});
+	const glow = new Mesh(glowGeo, glowMat);
+	glow.position.y = 0.3;
+	g.add(glow);
+	return g;
+}
+
+export function createExplosion(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	const colors = ['#ff6600', '#ffaa00', '#ff3300', scheme.primary];
+	for (let i = 0; i < 12; i++) {
+		const geo = new SphereGeometry(0.1 + Math.random() * 0.2, 6, 6);
+		const c = colors[Math.floor(Math.random() * colors.length)];
+		const mat = new MeshStandardMaterial({
+			color: c,
+			emissive: c,
+			emissiveIntensity: 2.0,
+			transparent: true,
+			opacity: 0.9,
+		});
+		const m = new Mesh(geo, mat);
+		m.position.set(
+			(Math.random() - 0.5) * 2,
+			(Math.random() - 0.5) * 2,
+			(Math.random() - 0.5) * 2,
+		);
+		g.add(m);
+	}
+	return g;
+}
+
+export function createOceanPlane(scheme: typeof COLOR_SCHEMES[0]): Mesh {
+	const geo = new PlaneGeometry(300, 300, 64, 64);
+	const mat = new MeshStandardMaterial({
+		color: scheme.water,
+		emissive: scheme.primary,
+		emissiveIntensity: 0.05,
+		transparent: true,
+		opacity: 0.85,
+		side: DoubleSide,
+	});
+	const mesh = new Mesh(geo, mat);
+	mesh.rotation.x = -Math.PI / 2;
+	mesh.position.y = -0.1;
+	return mesh;
+}
+
+export function createSeaMine(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	const mineGeo = new SphereGeometry(0.5, 8, 8);
+	const mineMat = new MeshStandardMaterial({
+		color: '#333333',
+		emissive: '#ff0000',
+		emissiveIntensity: 0.5,
+	});
+	const mine = new Mesh(mineGeo, mineMat);
+	g.add(mine);
+
+	// Spikes
+	for (let i = 0; i < 8; i++) {
+		const spike = new Mesh(
+			new ConeGeometry(0.08, 0.25, 4),
+			new MeshStandardMaterial({ color: '#666666', emissive: '#ff4400', emissiveIntensity: 0.5 })
+		);
+		const theta = (i / 8) * Math.PI * 2;
+		spike.position.set(Math.cos(theta) * 0.5, Math.sin(theta) * 0.5, 0);
+		spike.lookAt(mine.position);
+		g.add(spike);
+	}
+	return g;
+}
+
+export function createWaterSplash(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	for (let i = 0; i < 8; i++) {
+		const dropGeo = new SphereGeometry(0.06, 4, 4);
+		const dropMat = new MeshStandardMaterial({
+			color: scheme.primary,
+			emissive: scheme.primary,
+			emissiveIntensity: 0.8,
+			transparent: true,
+			opacity: 0.7,
+		});
+		const drop = new Mesh(dropGeo, dropMat);
+		const angle = (i / 8) * Math.PI * 2;
+		drop.position.set(Math.cos(angle) * 0.5, Math.random() * 0.8, Math.sin(angle) * 0.5);
+		g.add(drop);
+	}
+	return g;
+}
+
+// Starfield
+export function createStarfield(): Group {
+	const g = new Group();
+	for (let i = 0; i < 300; i++) {
+		const starGeo = new SphereGeometry(0.1 + Math.random() * 0.15, 4, 4);
+		const brightness = 0.3 + Math.random() * 0.7;
+		const starMat = new MeshStandardMaterial({
+			color: '#ffffff',
+			emissive: '#ffffff',
+			emissiveIntensity: brightness * 2,
+		});
+		const star = new Mesh(starGeo, starMat);
+		const theta = Math.random() * Math.PI * 2;
+		const phi = Math.random() * Math.PI * 0.4;
+		const r = 150 + Math.random() * 50;
+		star.position.set(
+			r * Math.sin(phi) * Math.cos(theta),
+			r * Math.cos(phi) + 20,
+			r * Math.sin(phi) * Math.sin(theta),
+		);
+		g.add(star);
+	}
+	return g;
+}

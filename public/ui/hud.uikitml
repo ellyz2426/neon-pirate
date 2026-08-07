@@ -1,0 +1,57 @@
+<style>
+  .root {
+    flex-direction: column;
+    padding: 12;
+    gap: 6;
+    background-color: rgba(0, 8, 20, 0.85);
+    border-radius: 10;
+    width: 380;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 356;
+  }
+  .label {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.8);
+  }
+  .value {
+    font-size: 16;
+    color: #00ffff;
+  }
+  .big-value {
+    font-size: 22;
+    color: #ffaa00;
+  }
+  .boss-bar {
+    font-size: 16;
+    color: #ff3344;
+  }
+  .combo {
+    font-size: 18;
+    color: #ff00ff;
+  }
+  .divider {
+    width: 356;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.15);
+  }
+</style>
+<Panel class="root">
+  <div class="row">
+    <div class="big-value" id="hud-score">Score: 0</div>
+    <div class="value" id="hud-wave">Wave 1</div>
+  </div>
+  <div class="divider"></div>
+  <div class="row">
+    <div class="value" id="hud-hp">HP: 100%</div>
+    <div class="value" id="hud-gold">Gold: 0</div>
+    <div class="value" id="hud-enemies">Enemies: 0</div>
+  </div>
+  <div class="combo" id="hud-combo"></div>
+  <div class="boss-bar" id="hud-boss"></div>
+</Panel>
