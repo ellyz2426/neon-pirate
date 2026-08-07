@@ -48,6 +48,10 @@
     font-size: 20;
     color: #ffdd00;
   }
+  .crew {
+    font-size: 13;
+    color: rgba(100, 220, 160, 0.9);
+  }
 </style>
 <Panel class="root">
   <div class="row">
@@ -68,6 +72,7 @@
     <div class="label" id="hud-harpoon"></div>
   </div>
   <div class="label" id="hud-ability"></div>
+  <div class="crew" id="hud-crew"></div>
   <div class="boarding" id="hud-boarding"></div>
   <div class="weather" id="hud-weather"></div>
 </Panel>

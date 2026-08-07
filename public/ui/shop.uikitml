@@ -3,10 +3,10 @@
     flex-direction: column;
     align-items: center;
     padding: 24;
-    gap: 10;
+    gap: 8;
     background-color: rgba(0, 8, 20, 0.94);
     border-radius: 14;
-    width: 420;
+    width: 440;
     border-color: rgba(255, 170, 0, 0.5);
     border-width: 2;
   }
@@ -19,7 +19,7 @@
     color: #ffdd00;
   }
   .divider {
-    width: 380;
+    width: 400;
     height: 1;
     background-color: rgba(255, 170, 0, 0.2);
   }
@@ -27,25 +27,35 @@
     flex-direction: row;
     gap: 8;
     align-items: center;
-    width: 380;
+    width: 400;
     justify-content: space-between;
   }
   .upgrade-info {
-    font-size: 12;
+    font-size: 11;
     color: rgba(0, 200, 255, 0.8);
   }
   .upgrade-label {
-    font-size: 14;
+    font-size: 13;
     color: #00ffff;
   }
   .btn {
-    padding: 8;
+    padding: 6;
     background-color: rgba(255, 170, 0, 0.15);
     border-radius: 6;
-    width: 100;
+    width: 80;
     align-items: center;
     cursor: pointer;
     border-color: rgba(255, 170, 0, 0.4);
+    border-width: 1;
+  }
+  .btn-crew {
+    padding: 6;
+    background-color: rgba(100, 220, 160, 0.12);
+    border-radius: 6;
+    width: 80;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(100, 220, 160, 0.4);
     border-width: 1;
   }
   .btn-continue {
@@ -59,12 +69,28 @@
     border-width: 1;
   }
   .btn-text {
-    font-size: 14;
+    font-size: 13;
     color: #ffaa00;
+  }
+  .btn-text-crew {
+    font-size: 13;
+    color: rgba(100, 220, 160, 1);
   }
   .btn-text-continue {
     font-size: 16;
     color: #00ffff;
+  }
+  .section-title {
+    font-size: 16;
+    color: rgba(100, 220, 160, 0.9);
+  }
+  .crew-count {
+    font-size: 14;
+    color: rgba(100, 220, 160, 0.7);
+  }
+  .crew-info {
+    font-size: 11;
+    color: rgba(100, 220, 160, 0.7);
   }
 </style>
 <Panel class="root">
@@ -90,6 +116,29 @@
     <div class="upgrade-label">REPAIR</div>
     <div class="upgrade-info" id="shop-repair-info">HP: 100/100 (50g)</div>
     <div class="btn" id="btn-repair"><div class="btn-text">REPAIR</div></div>
+  </div>
+  <div class="divider"></div>
+  <div class="section-title">HIRE CREW</div>
+  <div class="crew-count" id="shop-crew-count">Crew: 0</div>
+  <div class="upgrade-row">
+    <div class="upgrade-label">GUNNER</div>
+    <div class="crew-info" id="shop-crew-0">Gunner x0 (150g) -8% fire rate</div>
+    <div class="btn-crew" id="btn-hire-gunner"><div class="btn-text-crew">HIRE</div></div>
+  </div>
+  <div class="upgrade-row">
+    <div class="upgrade-label">NAVIGATOR</div>
+    <div class="crew-info" id="shop-crew-1">Navigator x0 (180g) +0.4 speed</div>
+    <div class="btn-crew" id="btn-hire-navigator"><div class="btn-text-crew">HIRE</div></div>
+  </div>
+  <div class="upgrade-row">
+    <div class="upgrade-label">DOCTOR</div>
+    <div class="crew-info" id="shop-crew-2">Doctor x0 (200g) +1 HP/s</div>
+    <div class="btn-crew" id="btn-hire-doctor"><div class="btn-text-crew">HIRE</div></div>
+  </div>
+  <div class="upgrade-row">
+    <div class="upgrade-label">LOOKOUT</div>
+    <div class="crew-info" id="shop-crew-3">Lookout x0 (120g) +radar range</div>
+    <div class="btn-crew" id="btn-hire-lookout"><div class="btn-text-crew">HIRE</div></div>
   </div>
   <div class="divider"></div>
   <div class="btn-continue" id="btn-shop-continue">

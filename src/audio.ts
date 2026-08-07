@@ -763,3 +763,49 @@ export function playMerchantHorn(vol: number = 0.7) {
 		osc.stop(ctx.currentTime + dur);
 	} catch { /* empty */ }
 }
+
+export function playCrewHire(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Cheerful ascending chime — crew joins
+		playTone(440, 0.15, 'triangle', vol * 0.2);
+		setTimeout(() => playTone(554, 0.15, 'triangle', vol * 0.2), 100);
+		setTimeout(() => playTone(660, 0.2, 'triangle', vol * 0.25), 200);
+		setTimeout(() => playTone(880, 0.3, 'triangle', vol * 0.15), 300);
+	} catch { /* empty */ }
+}
+
+export function playLegendaryChest(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Sparkly arpeggio for legendary treasure
+		playTone(660, 0.12, 'sine', vol * 0.2);
+		setTimeout(() => playTone(880, 0.12, 'sine', vol * 0.2), 80);
+		setTimeout(() => playTone(1100, 0.15, 'sine', vol * 0.2), 160);
+		setTimeout(() => playTone(1320, 0.25, 'sine', vol * 0.25), 240);
+		setTimeout(() => playTone(1760, 0.4, 'sine', vol * 0.15), 340);
+	} catch { /* empty */ }
+}
+
+export function playNightfall(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Descending tone — night arrives
+		playTone(440, 0.6, 'sine', vol * 0.1);
+		setTimeout(() => playTone(330, 0.8, 'sine', vol * 0.08), 400);
+	} catch { /* empty */ }
+}
+
+export function playDawn(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Ascending tone — dawn arrives
+		playTone(330, 0.5, 'sine', vol * 0.1);
+		setTimeout(() => playTone(440, 0.5, 'sine', vol * 0.1), 300);
+		setTimeout(() => playTone(554, 0.6, 'sine', vol * 0.08), 600);
+	} catch { /* empty */ }
+}

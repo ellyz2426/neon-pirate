@@ -64,6 +64,7 @@
   <div class="stat" id="result-time">Time: 0:00</div>
   <div class="stat" id="result-boarded"></div>
   <div class="stat" id="result-merchants"></div>
+  <div class="stat" id="result-crew"></div>
   <div class="divider"></div>
   <div class="lb-title">LEADERBOARD</div>
   <div class="lb-entry" id="lb-0">#1 ---</div>

@@ -271,14 +271,21 @@ export function createCannonball(isEnemy: boolean, scheme: typeof COLOR_SCHEMES[
 	return new Mesh(geo, mat);
 }
 
-export function createTreasure(scheme: typeof COLOR_SCHEMES[0]): Group {
+// Treasure rarity: 0=common, 1=rare, 2=legendary
+export function createTreasure(scheme: typeof COLOR_SCHEMES[0], rarity: number = 0): Group {
 	const g = new Group();
+	const chestColors = ['#886622', '#4488cc', '#cc44ff'];
+	const glowColors = ['#ffdd00', '#44ccff', '#ff44ff'];
+	const emissiveIntensities = [0.5, 1.0, 1.8];
+	const scales = [1.0, 1.15, 1.35];
+	const r = Math.min(rarity, 2);
+
 	// Chest body
 	const chestGeo = new BoxGeometry(0.6, 0.4, 0.4);
 	const chestMat = new MeshStandardMaterial({
-		color: '#886622',
-		emissive: scheme.accent,
-		emissiveIntensity: 0.5,
+		color: chestColors[r],
+		emissive: chestColors[r],
+		emissiveIntensity: emissiveIntensities[r],
 	});
 	const chest = new Mesh(chestGeo, chestMat);
 	g.add(chest);
@@ -286,14 +293,69 @@ export function createTreasure(scheme: typeof COLOR_SCHEMES[0]): Group {
 	// Gold glow on top
 	const glowGeo = new SphereGeometry(0.2, 8, 8);
 	const glowMat = new MeshStandardMaterial({
-		color: '#ffdd00',
-		emissive: '#ffdd00',
-		emissiveIntensity: 2.0,
+		color: glowColors[r],
+		emissive: glowColors[r],
+		emissiveIntensity: 2.0 + r * 0.8,
+		transparent: true,
+		opacity: 0.9,
 	});
 	const glow = new Mesh(glowGeo, glowMat);
 	glow.position.y = 0.3;
 	g.add(glow);
+
+	// Legendary gets an outer aura ring
+	if (r === 2) {
+		const auraGeo = new RingGeometry(0.5, 0.8, 12);
+		const auraMat = new MeshStandardMaterial({
+			color: '#ff44ff', emissive: '#ff44ff', emissiveIntensity: 2.5,
+			transparent: true, opacity: 0.4, side: DoubleSide,
+		});
+		const aura = new Mesh(auraGeo, auraMat);
+		aura.rotation.x = -Math.PI / 2;
+		aura.position.y = 0.05;
+		g.add(aura);
+	}
+	// Rare gets a shimmer ring
+	if (r === 1) {
+		const shimGeo = new RingGeometry(0.35, 0.55, 8);
+		const shimMat = new MeshStandardMaterial({
+			color: '#44ccff', emissive: '#44ccff', emissiveIntensity: 1.5,
+			transparent: true, opacity: 0.3, side: DoubleSide,
+		});
+		const shim = new Mesh(shimGeo, shimMat);
+		shim.rotation.x = -Math.PI / 2;
+		shim.position.y = 0.05;
+		g.add(shim);
+	}
+
+	g.scale.setScalar(scales[r]);
 	return g;
+}
+
+// Wake foam — wider fan shape behind ships
+export function createWakeFoam(): Mesh {
+	const geo = new SphereGeometry(0.12, 4, 4);
+	const mat = new MeshStandardMaterial({
+		color: '#bbddff',
+		emissive: '#88aacc',
+		emissiveIntensity: 0.6,
+		transparent: true,
+		opacity: 0.6,
+	});
+	return new Mesh(geo, mat);
+}
+
+// Spray particle for turns
+export function createSprayParticle(): Mesh {
+	const geo = new SphereGeometry(0.06, 3, 3);
+	const mat = new MeshStandardMaterial({
+		color: '#ffffff',
+		emissive: '#aaddff',
+		emissiveIntensity: 1.0,
+		transparent: true,
+		opacity: 0.7,
+	});
+	return new Mesh(geo, mat);
 }
 
 export function createExplosion(scheme: typeof COLOR_SCHEMES[0]): Group {

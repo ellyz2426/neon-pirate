@@ -47,6 +47,8 @@ import {
 	createMerchantShip,
 	createCoralReef,
 	createLavaRock,
+	createWakeFoam,
+	createSprayParticle,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -90,6 +92,10 @@ import {
 	playVolcanoRumble,
 	playLavaWhoosh,
 	playMerchantHorn,
+	playCrewHire,
+	playLegendaryChest,
+	playNightfall,
+	playDawn,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -148,6 +154,7 @@ interface TreasureData {
 	lifetime: number;
 	px: number;
 	pz: number;
+	rarity: number;
 }
 
 interface ExplosionData {
@@ -264,6 +271,22 @@ interface VolcanoEventData {
 	rocks: LavaRockData[];
 	spawned: number;
 }
+
+// Crew member types
+const CREW_GUNNER = 0;   // faster cannon fire rate
+const CREW_NAVIGATOR = 1; // speed boost
+const CREW_DOCTOR = 2;    // passive heal
+const CREW_LOOKOUT = 3;   // larger radar range
+
+interface CrewMember {
+	type: number;
+	name: string;
+}
+
+// Treasure rarity
+const RARITY_COMMON = 0;
+const RARITY_RARE = 1;
+const RARITY_LEGENDARY = 2;
 
 // Power-up types
 const PU_SPEED = 0;
@@ -539,6 +562,28 @@ export class GameSystem extends createSystem({}) {
 	private backgroundIslands: Group[] = [];
 	private lavaRocks: LavaRockData[] = [];
 
+	// Crew system
+	private crew: CrewMember[] = [];
+	private crewGunners = 0;
+	private crewNavigators = 0;
+	private crewDoctors = 0;
+	private crewLookouts = 0;
+	private healAccumulator = 0; // for doctor passive heal timing
+
+	// Day/night cycle
+	private dayNightPhase = 0; // 0=day, progresses toward 1=night, then back
+	private isNight = false;
+	private dayNightTransition = 0; // 0-1 lerp factor
+	private baseSkyColor = 0x0a1428;
+	private nightSkyColor = 0x020408;
+	private baseFogDensity = 0.008;
+	private nightFogDensity = 0.018;
+	private ambientLightRef: AmbientLight | null = null;
+	private dirLightRef: DirectionalLight | null = null;
+
+	// Spray particles for wakes
+	private sprayParticles: { mesh: Mesh; life: number; maxLife: number; vx: number; vy: number; vz: number }[] = [];
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -561,10 +606,12 @@ export class GameSystem extends createSystem({}) {
 		// Lights
 		const ambient = new AmbientLight(0x334455, 0.4);
 		this.world.scene.add(ambient);
+		this.ambientLightRef = ambient;
 
 		const dirLight = new DirectionalLight(new Color(scheme.primary), 0.3);
 		dirLight.position.set(20, 30, -10);
 		this.world.scene.add(dirLight);
+		this.dirLightRef = dirLight;
 
 		const moonLight = new PointLight(new Color('#aabbff'), 0.5, 200);
 		moonLight.position.set(-50, 60, -80);
@@ -793,6 +840,10 @@ export class GameSystem extends createSystem({}) {
 		this.shopPanel?.getElementById('btn-upgrade-hull')?.addEventListener('click', () => this.buyUpgrade('hull'));
 		this.shopPanel?.getElementById('btn-upgrade-speed')?.addEventListener('click', () => this.buyUpgrade('speed'));
 		this.shopPanel?.getElementById('btn-repair')?.addEventListener('click', () => this.buyUpgrade('repair'));
+		this.shopPanel?.getElementById('btn-hire-gunner')?.addEventListener('click', () => this.hireCrew(CREW_GUNNER));
+		this.shopPanel?.getElementById('btn-hire-navigator')?.addEventListener('click', () => this.hireCrew(CREW_NAVIGATOR));
+		this.shopPanel?.getElementById('btn-hire-doctor')?.addEventListener('click', () => this.hireCrew(CREW_DOCTOR));
+		this.shopPanel?.getElementById('btn-hire-lookout')?.addEventListener('click', () => this.hireCrew(CREW_LOOKOUT));
 		this.shopPanel?.getElementById('btn-shop-continue')?.addEventListener('click', () => {
 			playMenuSelect(this.volume); this.startNextWave();
 		});
@@ -877,6 +928,19 @@ export class GameSystem extends createSystem({}) {
 		this.shopDiscount = false;
 		this.totalMerchantAttacks = 0;
 		this.totalMerchantPasses = 0;
+
+		// Reset crew
+		this.crew = [];
+		this.crewGunners = 0;
+		this.crewNavigators = 0;
+		this.crewDoctors = 0;
+		this.crewLookouts = 0;
+		this.healAccumulator = 0;
+
+		// Reset day/night
+		this.dayNightPhase = 0;
+		this.isNight = false;
+		this.dayNightTransition = 0;
 
 		this.clearAllEntities();
 		this.spawnPlayerShip();
@@ -1128,6 +1192,9 @@ export class GameSystem extends createSystem({}) {
 		this.resultsPanel?.getElementById('result-merchants')?.setProperties({
 			text: merchantTotal > 0 ? `Merchants: ${this.totalMerchantAttacks} raided / ${this.totalMerchantPasses} spared` : ''
 		});
+		this.resultsPanel?.getElementById('result-crew')?.setProperties({
+			text: this.crew.length > 0 ? `Crew: ${this.crew.length} (G${this.crewGunners} N${this.crewNavigators} D${this.crewDoctors} L${this.crewLookouts})` : ''
+		});
 
 		const isNewHigh = highScores[0]?.score === this.score;
 		this.resultsPanel?.getElementById('result-highscore')?.setProperties({
@@ -1211,6 +1278,9 @@ export class GameSystem extends createSystem({}) {
 		// Clean up lava rocks
 		for (const lr of this.lavaRocks) lr.mesh.removeFromParent();
 		this.lavaRocks = [];
+		// Clean up spray particles
+		for (const sp of this.sprayParticles) sp.mesh.removeFromParent();
+		this.sprayParticles = [];
 	}
 
 	// ==== SPAWNING ====
@@ -1456,12 +1526,29 @@ export class GameSystem extends createSystem({}) {
 		this.explosions.push({ group, timer: 0, maxTime: 0.8 });
 	}
 
-	private spawnTreasure(x: number, z: number, value: number) {
+	private spawnTreasure(x: number, z: number, value: number, forceRarity?: number) {
 		const scheme = getScheme(this.colorScheme);
-		const group = createTreasure(scheme);
+		// Determine rarity based on value or forced rarity
+		let rarity = RARITY_COMMON;
+		if (forceRarity !== undefined) {
+			rarity = forceRarity;
+		} else if (value >= 200) {
+			rarity = RARITY_LEGENDARY;
+		} else if (value >= 80) {
+			rarity = RARITY_RARE;
+		}
+		// Apply rarity value multiplier
+		const valueMult = [1.0, 1.5, 3.0][rarity];
+		const finalValue = Math.round(value * valueMult);
+
+		const group = createTreasure(scheme, rarity);
 		group.position.set(x, 0.5, z);
 		this.world.scene.add(group);
-		this.treasures.push({ group, value, bobPhase: Math.random() * Math.PI * 2, lifetime: 0, px: x, pz: z });
+		this.treasures.push({ group, value: finalValue, bobPhase: Math.random() * Math.PI * 2, lifetime: 0, px: x, pz: z, rarity });
+
+		if (rarity === RARITY_LEGENDARY) {
+			playLegendaryChest(this.volume);
+		}
 	}
 
 	private spawnScorePopup(x: number, y: number, z: number, points: number) {
@@ -1544,6 +1631,43 @@ export class GameSystem extends createSystem({}) {
 		this.updateShopPanel();
 	}
 
+	private hireCrew(type: number) {
+		const crewNames = ['Gunner', 'Navigator', 'Doctor', 'Lookout'];
+		const costs = [150, 180, 200, 120];
+		let cost = costs[type];
+		if (this.shopDiscount) cost = Math.round(cost * 0.9);
+		if (this.playerGold < cost) return;
+
+		this.playerGold -= cost;
+		playCrewHire(this.volume);
+
+		const member: CrewMember = { type, name: crewNames[type] };
+		this.crew.push(member);
+
+		switch (type) {
+			case CREW_GUNNER:
+				this.crewGunners++;
+				// Each gunner reduces fire rate by 8% (stacking)
+				this.fireRate = Math.max(0.2, this.fireRate * 0.92);
+				break;
+			case CREW_NAVIGATOR:
+				this.crewNavigators++;
+				// Each navigator adds 0.4 speed
+				this.playerSpeed += 0.4;
+				break;
+			case CREW_DOCTOR:
+				this.crewDoctors++;
+				break;
+			case CREW_LOOKOUT:
+				this.crewLookouts++;
+				// Lookouts increase radar scale (makes enemies visible from further)
+				this.radarScale = 0.02 + this.crewLookouts * 0.005;
+				break;
+		}
+
+		this.updateShopPanel();
+	}
+
 	private updateShopPanel() {
 		const discountMult = this.shopDiscount ? 0.9 : 1;
 		const cannonCost = Math.round((100 + this.cannonLevel * 50) * discountMult);
@@ -1564,6 +1688,21 @@ export class GameSystem extends createSystem({}) {
 		});
 		this.shopPanel?.getElementById('shop-repair-info')?.setProperties({
 			text: `HP: ${this.playerHp}/${this.playerMaxHp} (${repairCost}g)`
+		});
+
+		// Crew hire info
+		const crewCosts = [150, 180, 200, 120];
+		const crewCounts = [this.crewGunners, this.crewNavigators, this.crewDoctors, this.crewLookouts];
+		const crewLabels = ['Gunner', 'Navigator', 'Doctor', 'Lookout'];
+		const crewBonuses = ['-8% fire rate', '+0.4 speed', '+1 HP/s', '+radar range'];
+		for (let c = 0; c < 4; c++) {
+			const cc = Math.round(crewCosts[c] * discountMult);
+			this.shopPanel?.getElementById(`shop-crew-${c}`)?.setProperties({
+				text: `${crewLabels[c]} x${crewCounts[c]} (${cc}g) ${crewBonuses[c]}`
+			});
+		}
+		this.shopPanel?.getElementById('shop-crew-count')?.setProperties({
+			text: `Crew: ${this.crew.length}`
 		});
 	}
 
@@ -1621,7 +1760,17 @@ export class GameSystem extends createSystem({}) {
 		// Weather / treasure map info
 		if (!this.treasureMapActive) {
 			const weatherNames = { calm: '☀ Calm', cloudy: '☁ Cloudy', storm: '⛈ Storm' };
-			this.hudPanel?.getElementById('hud-weather')?.setProperties({ text: weatherNames[this.weatherState] });
+			const dayLabel = this.isNight ? '🌙 Night' : '☀ Day';
+			this.hudPanel?.getElementById('hud-weather')?.setProperties({ text: `${weatherNames[this.weatherState]} | ${dayLabel}` });
+		}
+
+		// Crew display
+		if (this.crew.length > 0) {
+			this.hudPanel?.getElementById('hud-crew')?.setProperties({
+				text: `Crew: ${this.crew.length} (G${this.crewGunners} N${this.crewNavigators} D${this.crewDoctors} L${this.crewLookouts})`
+			});
+		} else {
+			this.hudPanel?.getElementById('hud-crew')?.setProperties({ text: '' });
 		}
 	}
 
@@ -1738,13 +1887,39 @@ export class GameSystem extends createSystem({}) {
 				const targetAngle = Math.atan2(moveX, -moveZ);
 				this.playerAngle = MathUtils.lerp(this.playerAngle, targetAngle, 5 * delta);
 
-				// Wake trail
+				// Wake trail — wider fan with foam particles
 				const scheme = getScheme(this.colorScheme);
-				if (Math.random() < 0.3) {
+				if (Math.random() < 0.4) {
+					// Main wake
 					this.spawnWakeTrail(
 						this.playerShipGroup.position.x - Math.sin(this.playerAngle) * 4 + (Math.random() - 0.5),
 						this.playerShipGroup.position.z + Math.cos(this.playerAngle) * 4 + (Math.random() - 0.5),
 						scheme,
+					);
+					// Side foam particles for V-wake
+					const perpX = Math.cos(this.playerAngle);
+					const perpZ = Math.sin(this.playerAngle);
+					const side = Math.random() < 0.5 ? 1 : -1;
+					const foam = createWakeFoam();
+					const fx = this.playerShipGroup.position.x - Math.sin(this.playerAngle) * 3 + perpX * side * (1 + Math.random());
+					const fz = this.playerShipGroup.position.z + Math.cos(this.playerAngle) * 3 + perpZ * side * (1 + Math.random());
+					foam.position.set(fx, 0.08, fz);
+					this.world.scene.add(foam);
+					this.wakeParticles.push({
+						mesh: foam,
+						life: 0,
+						maxLife: 2.0,
+						vx: perpX * side * 0.8 + (Math.random() - 0.5) * 0.2,
+						vz: perpZ * side * 0.8 + (Math.random() - 0.5) * 0.2,
+					});
+				}
+				// Spray on turns
+				if (Math.abs(moveX) > 0.5) {
+					const sprayDir = moveX > 0 ? -1 : 1;
+					this.spawnSpray(
+						this.playerShipGroup.position.x + Math.cos(this.playerAngle) * sprayDir * 2,
+						this.playerShipGroup.position.z + Math.sin(this.playerAngle) * sprayDir * 2,
+						sprayDir,
 					);
 				}
 			}
@@ -1835,6 +2010,9 @@ export class GameSystem extends createSystem({}) {
 		this.updateCoralReefEffects(delta);
 		this.updateVolcanoEvent(delta);
 		this.updateLavaRocks(delta);
+		this.updateDayNightCycle(delta);
+		this.updateCrewPassives(delta);
+		this.updateSprayParticles(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -2333,7 +2511,7 @@ export class GameSystem extends createSystem({}) {
 			t.lifetime += delta;
 			t.bobPhase += delta * 2;
 			t.group.position.y = 0.3 + Math.sin(t.bobPhase) * 0.15;
-			t.group.rotation.y += delta;
+			t.group.rotation.y += delta * (1 + t.rarity * 0.5); // legendaries spin faster
 
 			const dx = playerPos.x - t.px;
 			const dz = playerPos.z - t.pz;
@@ -2848,6 +3026,103 @@ export class GameSystem extends createSystem({}) {
 			if (fp.life <= 0) {
 				fp.mesh.removeFromParent();
 				this.foamParticles.splice(i, 1);
+			}
+		}
+	}
+
+	// ── Spray Particles (turn effect) ─────────────────────────
+	private spawnSpray(x: number, z: number, dir: number) {
+		for (let i = 0; i < 3; i++) {
+			const mesh = createSprayParticle();
+			mesh.position.set(x + (Math.random() - 0.5) * 0.5, 0.2 + Math.random() * 0.3, z + (Math.random() - 0.5) * 0.5);
+			this.world.scene.add(mesh);
+			this.sprayParticles.push({
+				mesh,
+				life: 0.6 + Math.random() * 0.3,
+				maxLife: 0.9,
+				vx: dir * (0.5 + Math.random() * 1.0),
+				vy: 1.5 + Math.random() * 1.5,
+				vz: (Math.random() - 0.5) * 0.8,
+			});
+		}
+	}
+
+	private updateSprayParticles(delta: number) {
+		for (let i = this.sprayParticles.length - 1; i >= 0; i--) {
+			const sp = this.sprayParticles[i];
+			sp.life -= delta;
+			sp.mesh.position.x += sp.vx * delta;
+			sp.mesh.position.y += sp.vy * delta;
+			sp.mesh.position.z += sp.vz * delta;
+			sp.vy -= 4 * delta; // gravity
+			const t = Math.max(0, sp.life / sp.maxLife);
+			(sp.mesh.material as MeshStandardMaterial).opacity = t * 0.7;
+			if (sp.life <= 0 || sp.mesh.position.y < -0.5) {
+				sp.mesh.removeFromParent();
+				this.sprayParticles.splice(i, 1);
+			}
+		}
+	}
+
+	// ── Day/Night Cycle ───────────────────────────────────────
+	private updateDayNightCycle(delta: number) {
+		// Every 4 waves, toggle day/night. Transition over ~3 seconds.
+		const shouldBeNight = Math.floor((this.wave - 1) / 4) % 2 === 1;
+
+		if (shouldBeNight !== this.isNight) {
+			this.isNight = shouldBeNight;
+			if (this.isNight) {
+				playNightfall(this.volume);
+			} else {
+				playDawn(this.volume);
+			}
+		}
+
+		const target = this.isNight ? 1.0 : 0.0;
+		this.dayNightTransition = MathUtils.lerp(this.dayNightTransition, target, 0.5 * delta);
+
+		const t = this.dayNightTransition;
+
+		// Interpolate sky color
+		const dayColor = new Color(this.baseSkyColor);
+		const nightColor = new Color(this.nightSkyColor);
+		const skyColor = dayColor.clone().lerp(nightColor, t);
+		if (this.world.scene.background instanceof Color) {
+			(this.world.scene.background as Color).copy(skyColor);
+		}
+
+		// Interpolate fog density
+		if (this.world.scene.fog instanceof FogExp2) {
+			const baseFog = this.weatherState === 'storm' ? this.baseFogDensity * 1.5 : this.baseFogDensity;
+			const nightFog = this.weatherState === 'storm' ? this.nightFogDensity * 1.2 : this.nightFogDensity;
+			(this.world.scene.fog as FogExp2).density = MathUtils.lerp(baseFog, nightFog, t);
+			(this.world.scene.fog as FogExp2).color.copy(skyColor);
+		}
+
+		// Interpolate light intensities
+		if (this.ambientLightRef) {
+			this.ambientLightRef.intensity = MathUtils.lerp(0.4, 0.15, t);
+		}
+		if (this.dirLightRef) {
+			this.dirLightRef.intensity = MathUtils.lerp(0.3, 0.08, t);
+		}
+
+		// Moon brightness at night
+		if (this.moonGroup) {
+			const moonMat = (this.moonGroup.children[0] as Mesh).material as MeshStandardMaterial;
+			moonMat.emissiveIntensity = MathUtils.lerp(1.0, 2.5, t);
+		}
+	}
+
+	// ── Crew Passives ─────────────────────────────────────────
+	private updateCrewPassives(delta: number) {
+		// Doctor passive heal: 1 HP/s per doctor
+		if (this.crewDoctors > 0 && this.playerHp < this.playerMaxHp) {
+			this.healAccumulator += this.crewDoctors * delta;
+			if (this.healAccumulator >= 1) {
+				const healAmt = Math.floor(this.healAccumulator);
+				this.playerHp = Math.min(this.playerHp + healAmt, this.playerMaxHp);
+				this.healAccumulator -= healAmt;
 			}
 		}
 	}
