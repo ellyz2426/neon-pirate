@@ -1174,3 +1174,123 @@ export function createLavaRock(): Mesh {
 	);
 	return rock;
 }
+
+
+// ── Sea Fortress ────────────────────────────────────────────
+export function createSeaFortress(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+
+	// Stone base platform
+	const baseMat = new MeshStandardMaterial({
+		color: '#555555', emissive: '#222222', emissiveIntensity: 0.2,
+	});
+	const base = new Mesh(new CylinderGeometry(5, 6, 1.5, 8), baseMat);
+	base.position.y = 0.5;
+	g.add(base);
+
+	// Wall sections (destructible)
+	const wallMat = new MeshStandardMaterial({
+		color: '#777777', emissive: '#333333', emissiveIntensity: 0.3,
+	});
+	for (let i = 0; i < 6; i++) {
+		const angle = (i / 6) * Math.PI * 2;
+		const wall = new Mesh(new BoxGeometry(2.5, 2.5, 0.6), wallMat);
+		wall.position.set(Math.cos(angle) * 4.5, 2.2, Math.sin(angle) * 4.5);
+		wall.rotation.y = angle + Math.PI / 2;
+		wall.userData = { isWall: true, wallIndex: i };
+		g.add(wall);
+	}
+
+	// Cannon turrets on top
+	const turretMat = new MeshStandardMaterial({
+		color: '#444444', emissive: scheme.accent, emissiveIntensity: 0.4,
+	});
+	for (let i = 0; i < 4; i++) {
+		const angle = (i / 4) * Math.PI * 2 + Math.PI / 8;
+		const turret = new Group();
+		const turretBase = new Mesh(new CylinderGeometry(0.5, 0.6, 0.8, 6), turretMat);
+		turret.add(turretBase);
+		const barrel = new Mesh(
+			new CylinderGeometry(0.12, 0.12, 1.2, 6),
+			new MeshStandardMaterial({ color: '#333333', emissive: scheme.primary, emissiveIntensity: 0.5 }),
+		);
+		barrel.position.set(0, 0.2, 0.7);
+		barrel.rotation.x = Math.PI / 2;
+		turret.add(barrel);
+		turret.position.set(Math.cos(angle) * 3.8, 3.5, Math.sin(angle) * 3.8);
+		turret.rotation.y = angle;
+		g.add(turret);
+	}
+
+	// Flag on center
+	const pole = new Mesh(
+		new CylinderGeometry(0.06, 0.06, 4, 4),
+		new MeshStandardMaterial({ color: '#8B4513', emissive: '#332200', emissiveIntensity: 0.3 }),
+	);
+	pole.position.y = 3.5;
+	g.add(pole);
+	const flag = new Mesh(
+		new BoxGeometry(1.2, 0.7, 0.02),
+		new MeshStandardMaterial({
+			color: '#cc0000', emissive: '#cc0000', emissiveIntensity: 0.8,
+			transparent: true, opacity: 0.9, side: DoubleSide,
+		}),
+	);
+	flag.position.set(0.6, 5.2, 0);
+	g.add(flag);
+
+	return g;
+}
+
+// ── Iceberg ────────────────────────────────────────────────
+export function createIceberg(): Group {
+	const g = new Group();
+	const mat = new MeshStandardMaterial({
+		color: '#aaddee', emissive: '#66aacc', emissiveIntensity: 0.4,
+		transparent: true, opacity: 0.8,
+	});
+	// Above water
+	const above = new Mesh(new ConeGeometry(1.5, 3, 5), mat);
+	above.position.y = 1.2;
+	above.rotation.y = Math.random() * Math.PI;
+	g.add(above);
+	// Below water (bigger, semi-transparent)
+	const below = new Mesh(
+		new ConeGeometry(3, 2, 6),
+		new MeshStandardMaterial({
+			color: '#88bbdd', emissive: '#4488aa', emissiveIntensity: 0.2,
+			transparent: true, opacity: 0.3,
+		}),
+	);
+	below.position.y = -0.5;
+	below.rotation.x = Math.PI;
+	g.add(below);
+	return g;
+}
+
+// ── Waterspout ─────────────────────────────────────────────
+export function createWaterspout(): Group {
+	const g = new Group();
+	const mat = new MeshStandardMaterial({
+		color: '#bbddff', emissive: '#88ccff', emissiveIntensity: 0.8,
+		transparent: true, opacity: 0.5,
+	});
+	// Column of water rings
+	for (let i = 0; i < 8; i++) {
+		const radius = 0.8 + i * 0.15;
+		const ring = new Mesh(new CylinderGeometry(radius, radius + 0.1, 1.2, 8, 1, true), mat);
+		ring.position.y = i * 1.5 + 0.5;
+		g.add(ring);
+	}
+	// Base splash
+	const splash = new Mesh(
+		new CylinderGeometry(2, 3, 0.5, 12, 1, true),
+		new MeshStandardMaterial({
+			color: '#ffffff', emissive: '#88ccee', emissiveIntensity: 0.6,
+			transparent: true, opacity: 0.4,
+		}),
+	);
+	splash.position.y = 0.3;
+	g.add(splash);
+	return g;
+}

@@ -809,3 +809,56 @@ export function playDawn(vol: number = 0.7) {
 		setTimeout(() => playTone(554, 0.6, 'sine', vol * 0.08), 600);
 	} catch { /* empty */ }
 }
+
+
+export function playFortressCannon(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Heavy boom — fortress cannon
+		playNoise(0.3, vol * 0.25);
+		playTone(80, 0.4, 'sawtooth', vol * 0.15);
+		setTimeout(() => playTone(60, 0.3, 'sawtooth', vol * 0.1), 100);
+	} catch { /* empty */ }
+}
+
+export function playFortressDestroyed(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		playNoise(0.5, vol * 0.3);
+		playTone(100, 0.5, 'sawtooth', vol * 0.2);
+		setTimeout(() => playNoise(0.4, vol * 0.25), 200);
+		setTimeout(() => playTone(60, 0.6, 'square', vol * 0.15), 400);
+	} catch { /* empty */ }
+}
+
+export function playIcebergHit(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Crunching ice
+		playNoise(0.2, vol * 0.2);
+		playTone(200, 0.15, 'square', vol * 0.15);
+		setTimeout(() => playTone(150, 0.2, 'square', vol * 0.1), 80);
+	} catch { /* empty */ }
+}
+
+export function playWaterspoutSpin(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Whooshing wind
+		playTone(300, 0.3, 'sine', vol * 0.08);
+		playTone(350, 0.3, 'sine', vol * 0.06, 50);
+	} catch { /* empty */ }
+}
+
+export function playShipLogEntry(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Subtle click for log entry
+		playTone(800, 0.05, 'sine', vol * 0.08);
+	} catch { /* empty */ }
+}

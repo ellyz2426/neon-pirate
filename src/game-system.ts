@@ -49,6 +49,9 @@ import {
 	createLavaRock,
 	createWakeFoam,
 	createSprayParticle,
+	createSeaFortress,
+	createIceberg,
+	createWaterspout,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -96,6 +99,11 @@ import {
 	playLegendaryChest,
 	playNightfall,
 	playDawn,
+	playFortressCannon,
+	playFortressDestroyed,
+	playIcebergHit,
+	playWaterspoutSpin,
+	playShipLogEntry,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -281,6 +289,43 @@ const CREW_LOOKOUT = 3;   // larger radar range
 interface CrewMember {
 	type: number;
 	name: string;
+}
+
+// Sea fortress data
+interface FortressData {
+	group: Group;
+	hp: number;
+	maxHp: number;
+	px: number;
+	pz: number;
+	wallsDestroyed: boolean[];
+	turretCooldowns: number[];
+	turretAngles: number[];
+}
+
+// Iceberg data
+interface IcebergData {
+	group: Group;
+	px: number;
+	pz: number;
+	bobPhase: number;
+}
+
+// Waterspout data
+interface WaterspoutData {
+	group: Group;
+	px: number;
+	pz: number;
+	lifetime: number;
+	maxLifetime: number;
+	rotSpeed: number;
+	pullRadius: number;
+}
+
+// Ship log entry
+interface ShipLogEntry {
+	text: string;
+	time: number; // game time when logged
 }
 
 // Treasure rarity
@@ -584,6 +629,18 @@ export class GameSystem extends createSystem({}) {
 	// Spray particles for wakes
 	private sprayParticles: { mesh: Mesh; life: number; maxLife: number; vx: number; vy: number; vz: number }[] = [];
 
+	// Sea fortress
+	private fortress: FortressData | null = null;
+	private fortressActive = false;
+
+	// Navigation hazards
+	private icebergs: IcebergData[] = [];
+	private waterspouts: WaterspoutData[] = [];
+
+	// Ship log
+	private shipLog: ShipLogEntry[] = [];
+	private logPanel: UIKitMLAsset | undefined;
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -850,6 +907,7 @@ export class GameSystem extends createSystem({}) {
 
 		// Tutorial
 		this.tutorialPanel = this.world.getSceneObject<UIKitMLAsset>('tutorial-panel');
+		this.logPanel = this.world.getSceneObject<UIKitMLAsset>('log-panel');
 		this.menuPanel?.getElementById('btn-tutorial')?.addEventListener('click', () => {
 			playMenuSelect(this.volume); this.showPanel('tutorial');
 		});
@@ -870,11 +928,14 @@ export class GameSystem extends createSystem({}) {
 			stats: this.statsPanel,
 			shop: this.shopPanel,
 			tutorial: this.tutorialPanel,
+			log: this.logPanel,
 		};
 
 		for (const [name, p] of Object.entries(panels)) {
 			if (p) {
-				p.visible = name === panel || (panel === 'playing' && name === 'hud');
+				// Log panel stays visible during gameplay alongside HUD
+				p.visible = name === panel ||
+					(panel === 'playing' && (name === 'hud' || name === 'log'));
 			}
 		}
 	}
@@ -942,6 +1003,17 @@ export class GameSystem extends createSystem({}) {
 		this.isNight = false;
 		this.dayNightTransition = 0;
 
+		// Reset ship log
+		this.shipLog = [];
+
+		// Reset fortress/hazards
+		if (this.fortress) { this.fortress.group.removeFromParent(); this.fortress = null; }
+		this.fortressActive = false;
+		for (const berg of this.icebergs) berg.group.removeFromParent();
+		this.icebergs = [];
+		for (const ws of this.waterspouts) ws.group.removeFromParent();
+		this.waterspouts = [];
+
 		this.clearAllEntities();
 		this.spawnPlayerShip();
 
@@ -951,6 +1023,7 @@ export class GameSystem extends createSystem({}) {
 		this.startWave();
 		this.showPanel('playing');
 		startMusic(this.volume, 100);
+		this.addLogEntry('⛵ Set sail! Good luck, Captain!');
 	}
 
 	private startWave() {
@@ -1012,13 +1085,34 @@ export class GameSystem extends createSystem({}) {
 			this.triggerVolcanoEvent();
 		}
 
+		// Sea fortress every 15th wave
+		if (this.wave % 15 === 0 && !this.fortressActive) {
+			this.spawnFortress();
+		}
+
+		// Icebergs — wave 8+, spawn 1-3
+		if (this.wave >= 8 && Math.random() < 0.4) {
+			const count = 1 + Math.floor(Math.random() * Math.min(3, Math.floor(this.wave / 8)));
+			for (let i = 0; i < count; i++) {
+				this.spawnIceberg();
+			}
+		}
+
+		// Waterspouts — wave 10+, 25% chance
+		if (this.wave >= 10 && Math.random() < 0.25) {
+			this.spawnWaterspout();
+		}
+
 		// Wave announcement
 		if (isBoss) {
 			this.showWaveAnnouncement(`⚓ WAVE ${this.wave} — BOSS INCOMING ⚓`);
+			this.addLogEntry(`⚓ Wave ${this.wave} — Boss incoming!`);
 		} else if (this.wave % 10 === 0) {
 			this.showWaveAnnouncement(`WAVE ${this.wave} — THE ARMADA GROWS`);
+			this.addLogEntry(`Wave ${this.wave} — The armada grows`);
 		} else {
 			this.showWaveAnnouncement(`WAVE ${this.wave}`);
+			if (this.wave > 1) this.addLogEntry(`Wave ${this.wave} begins`);
 		}
 
 		const bpm = 100 + Math.min(this.wave * 5, 60);
@@ -1281,6 +1375,15 @@ export class GameSystem extends createSystem({}) {
 		// Clean up spray particles
 		for (const sp of this.sprayParticles) sp.mesh.removeFromParent();
 		this.sprayParticles = [];
+		// Clean up fortress (if still active after clear)
+		if (this.fortress) { this.fortress.group.removeFromParent(); this.fortress = null; }
+		this.fortressActive = false;
+		// Clean up icebergs
+		for (const berg of this.icebergs) berg.group.removeFromParent();
+		this.icebergs = [];
+		// Clean up waterspouts
+		for (const ws of this.waterspouts) ws.group.removeFromParent();
+		this.waterspouts = [];
 	}
 
 	// ==== SPAWNING ====
@@ -1643,6 +1746,7 @@ export class GameSystem extends createSystem({}) {
 
 		const member: CrewMember = { type, name: crewNames[type] };
 		this.crew.push(member);
+		this.addLogEntry(`🧑‍✈️ Hired ${crewNames[type]} (crew: ${this.crew.length})`);
 
 		switch (type) {
 			case CREW_GUNNER:
@@ -2013,6 +2117,9 @@ export class GameSystem extends createSystem({}) {
 		this.updateDayNightCycle(delta);
 		this.updateCrewPassives(delta);
 		this.updateSprayParticles(delta);
+		this.updateFortress(delta);
+		this.updateIcebergs(delta);
+		this.updateWaterspouts(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -2422,6 +2529,19 @@ export class GameSystem extends createSystem({}) {
 							hitSomething = true;
 							break;
 						}
+					}
+				}
+
+				// Hit fortress
+				if (!hitSomething && this.fortressActive && this.fortress) {
+					const fx = ball.mesh.position.x - this.fortress.px;
+					const fz = ball.mesh.position.z - this.fortress.pz;
+					if (Math.sqrt(fx * fx + fz * fz) < 6 && ball.mesh.position.y < 6) {
+						this.damageFortress(ball.damage);
+						playHit(this.volume);
+						this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.5);
+						toRemove.push(i);
+						hitSomething = true;
 					}
 				}
 			}
@@ -2927,6 +3047,7 @@ export class GameSystem extends createSystem({}) {
 		const waveBonus = 50 + this.wave * 20;
 		this.playerGold += waveBonus;
 		this.score += waveBonus;
+		this.addLogEntry(`Wave ${this.wave} cleared! +${waveBonus}g`);
 
 		// Treasure map chance after boss waves
 		if (this.wave % 5 === 0 && !this.treasureMapActive) {
@@ -3123,6 +3244,271 @@ export class GameSystem extends createSystem({}) {
 				const healAmt = Math.floor(this.healAccumulator);
 				this.playerHp = Math.min(this.playerHp + healAmt, this.playerMaxHp);
 				this.healAccumulator -= healAmt;
+			}
+		}
+	}
+
+	// ── Ship Log ──────────────────────────────────────────────
+	private addLogEntry(text: string) {
+		const elapsed = Math.floor(this.time - (this.gameStartTime || 0));
+		const mins = Math.floor(elapsed / 60);
+		const secs = elapsed % 60;
+		const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+		this.shipLog.unshift({ text: `[${timeStr}] ${text}`, time: this.time });
+		if (this.shipLog.length > 8) this.shipLog.length = 8;
+		this.updateLogPanel();
+		playShipLogEntry(this.volume);
+	}
+
+	private updateLogPanel() {
+		for (let i = 0; i < 8; i++) {
+			const entry = this.shipLog[i];
+			this.logPanel?.getElementById(`log-${i}`)?.setProperties({
+				text: entry ? entry.text : ''
+			});
+		}
+	}
+
+	// ── Sea Fortress ──────────────────────────────────────────
+	private spawnFortress() {
+		if (this.fortressActive) return;
+		const scheme = getScheme(this.colorScheme);
+		const group = createSeaFortress(scheme);
+		// Place fortress at edge of play area
+		const angle = Math.random() * Math.PI * 2;
+		const r = 25 + Math.random() * 10;
+		const px = Math.cos(angle) * r;
+		const pz = Math.sin(angle) * r;
+		group.position.set(px, 0, pz);
+		this.world.scene.add(group);
+
+		const hp = 300 + this.wave * 20;
+		this.fortress = {
+			group, hp, maxHp: hp, px, pz,
+			wallsDestroyed: [false, false, false, false, false, false],
+			turretCooldowns: [0, 0, 0, 0],
+			turretAngles: [0, 0, 0, 0],
+		};
+		this.fortressActive = true;
+		this.addLogEntry('⚔ Sea fortress spotted!');
+	}
+
+	private updateFortress(delta: number) {
+		if (!this.fortressActive || !this.fortress) return;
+		const f = this.fortress;
+		const playerPos = this.playerShipGroup?.position || new Vector3();
+
+		// Turrets fire at player
+		for (let t = 0; t < 4; t++) {
+			f.turretCooldowns[t] -= delta;
+			if (f.turretCooldowns[t] <= 0) {
+				const dx = playerPos.x - f.px;
+				const dz = playerPos.z - f.pz;
+				const dist = Math.sqrt(dx * dx + dz * dz);
+				if (dist < 50) {
+					const angle = Math.atan2(dx, -dz);
+					f.turretAngles[t] = angle;
+					// Fire cannonball at player
+					const speed = 15;
+					const vx = Math.sin(angle) * speed;
+					const vz = -Math.cos(angle) * speed;
+					const scheme = getScheme(this.colorScheme);
+					const ball = createCannonball(true, scheme);
+					ball.position.set(f.px, 3.5, f.pz);
+					this.world.scene.add(ball);
+					this.cannonballs.push({
+						mesh: ball, vx, vy: 0, vz,
+						damage: 15 + Math.floor(this.wave / 5) * 3,
+						isEnemy: true, lifetime: 0, maxLifetime: 4,
+						trail: [],
+					});
+					playFortressCannon(this.volume);
+					f.turretCooldowns[t] = 1.5 + Math.random();
+				}
+			}
+		}
+
+		// Check if fortress is destroyed
+		if (f.hp <= 0 && this.fortressActive) {
+			this.fortressActive = false;
+			this.spawnExplosion(f.px, 2, f.pz, 4);
+			this.spawnExplosion(f.px + 2, 3, f.pz - 2, 3);
+			this.spawnExplosion(f.px - 2, 1, f.pz + 2, 3);
+			playFortressDestroyed(this.volume);
+			this.shakeIntensity = 3;
+			// Big treasure reward
+			for (let i = 0; i < 5; i++) {
+				this.spawnTreasure(
+					f.px + (Math.random() - 0.5) * 8,
+					f.pz + (Math.random() - 0.5) * 8,
+					150 + this.wave * 10,
+				);
+			}
+			this.score += 1000;
+			this.spawnScorePopup(f.px, 5, f.pz, 1000);
+			this.addLogEntry('🏰 Sea fortress destroyed! +1000pts');
+			// Remove after a delay
+			setTimeout(() => {
+				f.group.removeFromParent();
+				this.fortress = null;
+			}, 2000);
+		}
+	}
+
+	private damageFortress(amount: number) {
+		if (!this.fortress || !this.fortressActive) return;
+		this.fortress.hp -= amount;
+		// Destroy walls as HP decreases
+		const hpPct = this.fortress.hp / this.fortress.maxHp;
+		for (let i = 0; i < 6; i++) {
+			if (!this.fortress.wallsDestroyed[i] && hpPct < (1 - (i + 1) / 7)) {
+				this.fortress.wallsDestroyed[i] = true;
+				// Hide the wall mesh
+				const wall = this.fortress.group.children.find(
+					(c) => c.userData?.isWall && c.userData?.wallIndex === i
+				);
+				if (wall) {
+					this.spawnExplosion(wall.position.x + this.fortress.px, 2, wall.position.z + this.fortress.pz, 1.5);
+					wall.visible = false;
+				}
+			}
+		}
+	}
+
+	// ── Icebergs ──────────────────────────────────────────────
+	private spawnIceberg() {
+		const group = createIceberg();
+		const px = (Math.random() - 0.5) * 70;
+		const pz = (Math.random() - 0.5) * 70;
+		group.position.set(px, 0, pz);
+		this.world.scene.add(group);
+		this.icebergs.push({ group, px, pz, bobPhase: Math.random() * Math.PI * 2 });
+	}
+
+	private updateIcebergs(delta: number) {
+		const playerPos = this.playerShipGroup?.position || new Vector3();
+		for (const berg of this.icebergs) {
+			berg.bobPhase += delta;
+			berg.group.position.y = Math.sin(berg.bobPhase * 0.5) * 0.1;
+			berg.group.rotation.y += delta * 0.05;
+
+			// Check collision with player
+			const dx = playerPos.x - berg.px;
+			const dz = playerPos.z - berg.pz;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < 2.5 && this.state === STATE_PLAYING) {
+				// Push player away and damage
+				if (!this.dashInvincible) {
+					this.playerHp -= 20;
+					this.damageFlashTimer = 0.3;
+					this.shakeIntensity = 1.5;
+					playIcebergHit(this.volume);
+					this.addLogEntry('🧊 Hit an iceberg! -20 HP');
+					// Push player back
+					if (this.playerShipGroup) {
+						this.playerShipGroup.position.x += (dx / dist) * 5;
+						this.playerShipGroup.position.z += (dz / dist) * 5;
+						this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
+						this.playerShipGroup.position.z = MathUtils.clamp(this.playerShipGroup.position.z, -40, 40);
+					}
+					// Move iceberg so it doesn't keep hitting
+					berg.px += (Math.random() - 0.5) * 20;
+					berg.pz += (Math.random() - 0.5) * 20;
+					berg.group.position.x = berg.px;
+					berg.group.position.z = berg.pz;
+				}
+			}
+
+			// Check collision with enemies
+			for (const enemy of this.enemies) {
+				if (enemy.isSinking) continue;
+				const ex = enemy.group.position.x - berg.px;
+				const ez = enemy.group.position.z - berg.pz;
+				const eDist = Math.sqrt(ex * ex + ez * ez);
+				if (eDist < 3) {
+					enemy.hp -= 10;
+					enemy.group.position.x += (ex / eDist) * 3;
+					enemy.group.position.z += (ez / eDist) * 3;
+				}
+			}
+		}
+	}
+
+	// ── Waterspouts ───────────────────────────────────────────
+	private spawnWaterspout() {
+		const group = createWaterspout();
+		const px = (Math.random() - 0.5) * 60;
+		const pz = (Math.random() - 0.5) * 60;
+		group.position.set(px, 0, pz);
+		this.world.scene.add(group);
+		this.waterspouts.push({
+			group, px, pz,
+			lifetime: 0, maxLifetime: 10 + Math.random() * 8,
+			rotSpeed: 2 + Math.random() * 2,
+			pullRadius: 8 + Math.random() * 4,
+		});
+		this.addLogEntry('🌪 Waterspout appeared!');
+	}
+
+	private updateWaterspouts(delta: number) {
+		const playerPos = this.playerShipGroup?.position || new Vector3();
+		for (let i = this.waterspouts.length - 1; i >= 0; i--) {
+			const ws = this.waterspouts[i];
+			ws.lifetime += delta;
+			ws.group.rotation.y += ws.rotSpeed * delta;
+
+			// Scale pulsing
+			const pulse = 0.9 + Math.sin(ws.lifetime * 3) * 0.1;
+			ws.group.scale.setScalar(pulse);
+
+			// Pull player toward center
+			const dx = playerPos.x - ws.px;
+			const dz = playerPos.z - ws.pz;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < ws.pullRadius && dist > 0.5 && this.playerShipGroup && this.state === STATE_PLAYING) {
+				const pullStrength = (1 - dist / ws.pullRadius) * 4 * delta;
+				this.playerShipGroup.position.x -= (dx / dist) * pullStrength;
+				this.playerShipGroup.position.z -= (dz / dist) * pullStrength;
+
+				// Launch player if too close
+				if (dist < 2 && !this.dashInvincible) {
+					// Fling the ship upward and outward
+					const launchDir = Math.random() * Math.PI * 2;
+					if (this.playerShipGroup) {
+						this.playerShipGroup.position.x += Math.cos(launchDir) * 12;
+						this.playerShipGroup.position.z += Math.sin(launchDir) * 12;
+						this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
+						this.playerShipGroup.position.z = MathUtils.clamp(this.playerShipGroup.position.z, -40, 40);
+					}
+					this.playerHp -= 15;
+					this.damageFlashTimer = 0.3;
+					this.shakeIntensity = 2;
+					playWaterspoutSpin(this.volume);
+					this.addLogEntry('🌪 Launched by waterspout! -15 HP');
+				}
+			}
+
+			// Pull enemies too
+			for (const enemy of this.enemies) {
+				if (enemy.isSinking) continue;
+				const ex = enemy.group.position.x - ws.px;
+				const ez = enemy.group.position.z - ws.pz;
+				const eDist = Math.sqrt(ex * ex + ez * ez);
+				if (eDist < ws.pullRadius && eDist > 1) {
+					enemy.group.position.x -= (ex / eDist) * 2 * delta;
+					enemy.group.position.z -= (ez / eDist) * 2 * delta;
+				}
+			}
+
+			// Remove expired
+			if (ws.lifetime >= ws.maxLifetime) {
+				const fadeT = (ws.lifetime - ws.maxLifetime + 1);
+				if (fadeT > 1) {
+					ws.group.removeFromParent();
+					this.waterspouts.splice(i, 1);
+				} else {
+					ws.group.scale.setScalar(1 - fadeT);
+				}
 			}
 		}
 	}

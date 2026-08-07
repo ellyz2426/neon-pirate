@@ -44,4 +44,9 @@ export default defineAssets({
 		type: AssetType.UIKitML,
 		name: 'Tutorial Panel',
 	},
+	'log-panel': {
+		url: publicAssetUrl('ui/log.uikitml'),
+		type: AssetType.UIKitML,
+		name: 'Ship Log Panel',
+	},
 });
