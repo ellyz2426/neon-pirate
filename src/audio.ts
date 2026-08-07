@@ -295,3 +295,50 @@ export function playWhirlpoolHum(vol: number = 0.7) {
 	o.stop(ctx.currentTime + 0.5);
 	lfo.stop(ctx.currentTime + 0.5);
 }
+
+export function playThunder(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Deep rumbling thunder
+	const bufferSize = ctx.sampleRate * 1.2;
+	const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+	const data = buffer.getChannelData(0);
+	for (let i = 0; i < bufferSize; i++) {
+		const env = Math.exp(-i / (ctx.sampleRate * 0.4));
+		data[i] = (Math.random() * 2 - 1) * env;
+	}
+	const source = ctx.createBufferSource();
+	source.buffer = buffer;
+	const filter = ctx.createBiquadFilter();
+	filter.type = 'lowpass';
+	filter.frequency.value = 200;
+	filter.Q.value = 1;
+	const g = ctx.createGain();
+	source.connect(filter);
+	filter.connect(g);
+	g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.35, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+	source.start(ctx.currentTime);
+}
+
+export function playTreasureMapFound(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Mystery / discovery jingle
+	const notes = [392, 440, 523, 659, 784]; // G4 A4 C5 E5 G5
+	notes.forEach((freq, i) => {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.connect(g); g.connect(ctx.destination);
+		o.type = 'triangle';
+		o.frequency.value = freq;
+		const t = ctx.currentTime + i * 0.12;
+		g.gain.setValueAtTime(vol * 0.2, t);
+		g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+		o.start(t);
+		o.stop(t + 0.25);
+	});
+}

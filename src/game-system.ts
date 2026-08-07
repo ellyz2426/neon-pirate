@@ -36,6 +36,7 @@ import {
 	createCompass,
 	createIsland,
 	createSeagull,
+	createRadarBlip,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -61,6 +62,8 @@ import {
 	playBarrelBreak,
 	playSplashImpact,
 	playWhirlpoolHum,
+	playThunder,
+	playTreasureMapFound,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -354,6 +357,27 @@ export class GameSystem extends createSystem({}) {
 
 	// Compass
 	private compass: Group | null = null;
+
+	// Radar blips for minimap
+	private radarBlips: { mesh: Mesh; enemy: EnemyData | null }[] = [];
+	private radarScale = 0.02; // world units to radar units
+
+	// Weather system
+	private weatherState: 'calm' | 'cloudy' | 'storm' = 'calm';
+	private weatherTimer = 0;
+	private weatherTransition = 0;
+	private targetFogDensity = 0.008;
+	private currentFogDensity = 0.008;
+	private rainParticles: { mesh: Mesh; vy: number; resetY: number }[] = [];
+	private thunderTimer = 0;
+
+	// Treasure map events
+	private treasureMapMarker: Group | null = null;
+	private treasureMapActive = false;
+	private treasureMapX = 0;
+	private treasureMapZ = 0;
+	private treasureMapTimer = 0;
+	private treasureMapBeacon: Mesh | null = null;
 
 	init() {
 		const settings = loadSettings();
@@ -748,6 +772,15 @@ export class GameSystem extends createSystem({}) {
 
 		const bpm = 100 + Math.min(this.wave * 5, 60);
 		setBPM(bpm, this.volume);
+
+		// Weather transitions - storms on boss waves, random weather otherwise
+		if (isBoss) {
+			this.setWeather('storm');
+		} else if (this.wave % 3 === 0) {
+			this.setWeather('cloudy');
+		} else {
+			this.setWeather('calm');
+		}
 	}
 
 	private spawnFormation() {
@@ -940,6 +973,14 @@ export class GameSystem extends createSystem({}) {
 		this.splashes = [];
 		if (this.lightningFlash) { this.lightningFlash.removeFromParent(); this.lightningFlash = null; }
 		if (this.waveAnnounceMesh) { this.waveAnnounceMesh.removeFromParent(); this.waveAnnounceMesh = null; }
+		// Clean up radar blips
+		for (const blip of this.radarBlips) blip.mesh.removeFromParent();
+		this.radarBlips = [];
+		// Clean up rain
+		for (const rp of this.rainParticles) rp.mesh.removeFromParent();
+		this.rainParticles = [];
+		// Clean up treasure map
+		this.cleanupTreasureMap();
 	}
 
 	// ==== SPAWNING ====
@@ -1276,6 +1317,12 @@ export class GameSystem extends createSystem({}) {
 		// Dash display
 		const dashText = this.dashCooldown > 0 ? `Dash: ${this.dashCooldown.toFixed(1)}s` : 'Dash: Ready';
 		this.hudPanel?.getElementById('hud-dash')?.setProperties({ text: dashText });
+
+		// Weather / treasure map info
+		if (!this.treasureMapActive) {
+			const weatherNames = { calm: '☀ Calm', cloudy: '☁ Cloudy', storm: '⛈ Storm' };
+			this.hudPanel?.getElementById('hud-weather')?.setProperties({ text: weatherNames[this.weatherState] });
+		}
 	}
 
 	// ==== MAIN UPDATE ====
@@ -1298,6 +1345,8 @@ export class GameSystem extends createSystem({}) {
 		this.animateOcean(time);
 		this.updateDamageFlash(delta);
 		this.updateAimReticle();
+		this.updateWeather(delta);
+		this.updateRadarBlips();
 
 		// Screen shake
 		if (this.shakeIntensity > 0.01) {
@@ -1437,6 +1486,7 @@ export class GameSystem extends createSystem({}) {
 		this.updateWaveAnnouncement(delta);
 		this.updateSeagulls(delta);
 		this.updateCompass();
+		this.updateTreasureMap(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -2228,6 +2278,11 @@ export class GameSystem extends createSystem({}) {
 		this.playerGold += waveBonus;
 		this.score += waveBonus;
 
+		// Treasure map chance after boss waves
+		if (this.wave % 5 === 0 && !this.treasureMapActive) {
+			this.spawnTreasureMapEvent();
+		}
+
 		setTimeout(() => {
 			if (this.state === STATE_WAVE_CLEAR) {
 				this.state = STATE_SHOP;
@@ -2471,6 +2526,273 @@ export class GameSystem extends createSystem({}) {
 				mat.opacity *= Math.exp(-12 * delta);
 				if (mat.opacity < 0.005) mat.opacity = 0;
 			}
+		}
+	}
+
+	// ── Weather System ──────────────────────────────────────────
+	private setWeather(weather: 'calm' | 'cloudy' | 'storm') {
+		this.weatherState = weather;
+		this.weatherTransition = 0;
+		switch (weather) {
+			case 'calm':
+				this.targetFogDensity = 0.008;
+				break;
+			case 'cloudy':
+				this.targetFogDensity = 0.014;
+				break;
+			case 'storm':
+				this.targetFogDensity = 0.022;
+				this.thunderTimer = 2 + Math.random() * 4;
+				break;
+		}
+	}
+
+	private updateWeather(delta: number) {
+		// Smooth fog transition
+		this.currentFogDensity += (this.targetFogDensity - this.currentFogDensity) * delta * 0.5;
+		if (this.world.scene.fog) {
+			(this.world.scene.fog as FogExp2).density = this.currentFogDensity;
+		}
+
+		this.weatherTransition += delta;
+
+		if (this.weatherState === 'storm') {
+			// Spawn rain particles
+			if (this.rainParticles.length < 120 && this.playerShipGroup) {
+				const px = this.playerShipGroup.position.x + (Math.random() - 0.5) * 50;
+				const pz = this.playerShipGroup.position.z + (Math.random() - 0.5) * 50;
+				const rainDrop = new Mesh(
+					new CylinderGeometry(0.015, 0.015, 0.6, 3),
+					new MeshBasicMaterial({ color: 0x6688bb, transparent: true, opacity: 0.4 }),
+				);
+				rainDrop.position.set(px, 15 + Math.random() * 10, pz);
+				this.scene.add(rainDrop);
+				this.rainParticles.push({ mesh: rainDrop, vy: -18 - Math.random() * 8, resetY: 15 + Math.random() * 10 });
+			}
+
+			// Thunder during storm
+			this.thunderTimer -= delta;
+			if (this.thunderTimer <= 0) {
+				this.thunderTimer = 4 + Math.random() * 8;
+				playThunder(this.volume * 0.6);
+				this.shakeIntensity = Math.max(this.shakeIntensity, 0.15);
+			}
+		} else {
+			// Remove rain when not storming
+			if (this.rainParticles.length > 0 && Math.random() < delta * 2) {
+				const rp = this.rainParticles.pop();
+				if (rp) rp.mesh.removeFromParent();
+			}
+		}
+
+		// Update rain particles
+		for (const rp of this.rainParticles) {
+			rp.mesh.position.y += rp.vy * delta;
+			if (rp.mesh.position.y < 0) {
+				rp.mesh.position.y = rp.resetY;
+				if (this.playerShipGroup) {
+					rp.mesh.position.x = this.playerShipGroup.position.x + (Math.random() - 0.5) * 50;
+					rp.mesh.position.z = this.playerShipGroup.position.z + (Math.random() - 0.5) * 50;
+				}
+			}
+		}
+
+		// Cloudy weather: slightly dim ambient light (visual cue via fog is enough)
+	}
+
+	// ── Radar Minimap ──────────────────────────────────────────
+	private updateRadarBlips() {
+		if (!this.compass || !this.playerShipGroup) return;
+
+		const playerPos = this.playerShipGroup.position;
+
+		// Remove stale blips
+		while (this.radarBlips.length > this.enemies.length) {
+			const blip = this.radarBlips.pop();
+			if (blip) blip.mesh.removeFromParent();
+		}
+
+		// Add/update blips for each enemy
+		for (let i = 0; i < this.enemies.length; i++) {
+			const enemy = this.enemies[i];
+			if (enemy.isSinking) {
+				if (this.radarBlips[i]) {
+					this.radarBlips[i].mesh.visible = false;
+				}
+				continue;
+			}
+
+			// Create blip if needed
+			if (!this.radarBlips[i]) {
+				const scheme = getScheme(this.colorScheme);
+				const mesh = createRadarBlip(enemy.shipType, scheme);
+				this.compass.add(mesh);
+				this.radarBlips[i] = { mesh, enemy };
+			}
+
+			const blip = this.radarBlips[i];
+			blip.mesh.visible = true;
+			blip.enemy = enemy;
+
+			// Map world position to minimap
+			const relX = (enemy.group.position.x - playerPos.x) * this.radarScale;
+			const relZ = (enemy.group.position.z - playerPos.z) * this.radarScale;
+			// Clamp to compass radius
+			const maxR = 0.75;
+			const dist = Math.sqrt(relX * relX + relZ * relZ);
+			if (dist > maxR) {
+				blip.mesh.position.set(
+					(relX / dist) * maxR,
+					0.1,
+					(relZ / dist) * maxR,
+				);
+			} else {
+				blip.mesh.position.set(relX, 0.1, relZ);
+			}
+
+			// Pulse boss blips
+			if (enemy.shipType === EnemyType.ManOWar) {
+				const pulse = 0.8 + Math.sin(this.time * 6) * 0.4;
+				blip.mesh.scale.setScalar(pulse);
+			}
+		}
+	}
+
+	// ── Treasure Map Events ──────────────────────────────────────
+	private spawnTreasureMapEvent() {
+		if (this.treasureMapActive) return;
+		this.treasureMapActive = true;
+
+		// Random location, not too close to player
+		let px: number, pz: number;
+		do {
+			px = (Math.random() - 0.5) * 60;
+			pz = (Math.random() - 0.5) * 60;
+		} while (this.playerShipGroup && Math.sqrt(
+			(px - this.playerShipGroup.position.x) ** 2 +
+			(pz - this.playerShipGroup.position.z) ** 2
+		) < 15);
+
+		this.treasureMapX = px;
+		this.treasureMapZ = pz;
+		this.treasureMapTimer = 30; // 30 seconds to reach it
+
+		const scheme = getScheme(this.colorScheme);
+
+		// Create the treasure map marker — "X marks the spot"
+		const marker = new Group();
+
+		// X shape from two crossed bars
+		const bar1 = new Mesh(
+			new BoxGeometry(0.15, 0.1, 2),
+			new MeshStandardMaterial({ color: '#ffdd00', emissive: '#ffdd00', emissiveIntensity: 1.5 }),
+		);
+		bar1.rotation.y = Math.PI / 4;
+		marker.add(bar1);
+		const bar2 = new Mesh(
+			new BoxGeometry(0.15, 0.1, 2),
+			new MeshStandardMaterial({ color: '#ffdd00', emissive: '#ffdd00', emissiveIntensity: 1.5 }),
+		);
+		bar2.rotation.y = -Math.PI / 4;
+		marker.add(bar2);
+
+		// Outer ring
+		const ring = new Mesh(
+			new RingGeometry(1.5, 1.7, 16),
+			new MeshStandardMaterial({
+				color: '#ffdd00', emissive: '#ffdd00', emissiveIntensity: 0.8,
+				transparent: true, opacity: 0.5, side: DoubleSide,
+			}),
+		);
+		ring.rotation.x = -Math.PI / 2;
+		ring.position.y = 0.05;
+		marker.add(ring);
+
+		marker.position.set(px, 0.3, pz);
+		this.scene.add(marker);
+		this.treasureMapMarker = marker;
+
+		// Beacon column
+		const beacon = new Mesh(
+			new CylinderGeometry(0.08, 0.3, 12, 6),
+			new MeshStandardMaterial({
+				color: '#ffdd00', emissive: '#ffdd00', emissiveIntensity: 1.2,
+				transparent: true, opacity: 0.25,
+			}),
+		);
+		beacon.position.set(px, 6, pz);
+		this.scene.add(beacon);
+		this.treasureMapBeacon = beacon;
+
+		playTreasureMapFound(this.volume);
+		this.showWaveAnnouncement('⚓ TREASURE MAP! ⚓');
+	}
+
+	private updateTreasureMap(delta: number) {
+		if (!this.treasureMapActive || !this.playerShipGroup) return;
+
+		this.treasureMapTimer -= delta;
+
+		// Animate the marker
+		if (this.treasureMapMarker) {
+			this.treasureMapMarker.rotation.y += delta * 0.8;
+			this.treasureMapMarker.position.y = 0.3 + Math.sin(this.time * 2) * 0.2;
+		}
+
+		// Pulse beacon
+		if (this.treasureMapBeacon) {
+			const mat = this.treasureMapBeacon.material as MeshStandardMaterial;
+			mat.opacity = 0.15 + Math.sin(this.time * 3) * 0.1;
+			this.treasureMapBeacon.rotation.y += delta * 2;
+		}
+
+		// Check if player reached the treasure
+		const dx = this.playerShipGroup.position.x - this.treasureMapX;
+		const dz = this.playerShipGroup.position.z - this.treasureMapZ;
+		const dist = Math.sqrt(dx * dx + dz * dz);
+
+		if (dist < 4) {
+			// Collected! Big reward
+			const reward = 300 + this.wave * 50;
+			this.playerGold += reward;
+			this.score += reward * 2;
+			playTreasureCollect(this.volume);
+			this.spawnExplosion(this.treasureMapX, 1, this.treasureMapZ, 2);
+			this.spawnScorePopup(this.treasureMapX, 3, this.treasureMapZ, reward * 2);
+
+			// Spawn extra treasures around the spot
+			for (let i = 0; i < 5; i++) {
+				this.spawnTreasure(
+					this.treasureMapX + (Math.random() - 0.5) * 6,
+					this.treasureMapZ + (Math.random() - 0.5) * 6,
+					50 + this.wave * 10,
+				);
+			}
+
+			this.cleanupTreasureMap();
+			return;
+		}
+
+		// Timer expired
+		if (this.treasureMapTimer <= 0) {
+			this.cleanupTreasureMap();
+			return;
+		}
+
+		// Update HUD with treasure map info
+		const timerText = `MAP: ${Math.ceil(this.treasureMapTimer)}s | ${Math.round(dist)}m`;
+		this.hudPanel?.getElementById('hud-weather')?.setProperties({ text: timerText });
+	}
+
+	private cleanupTreasureMap() {
+		this.treasureMapActive = false;
+		if (this.treasureMapMarker) {
+			this.treasureMapMarker.removeFromParent();
+			this.treasureMapMarker = null;
+		}
+		if (this.treasureMapBeacon) {
+			this.treasureMapBeacon.removeFromParent();
+			this.treasureMapBeacon = null;
 		}
 	}
 }
