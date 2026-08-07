@@ -492,3 +492,73 @@ export function playTreasureMapFound(vol: number = 0.7) {
 		o.stop(t + 0.25);
 	});
 }
+
+export function playChainLightning(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Crackling zap cascade
+	for (let i = 0; i < 3; i++) {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.type = 'sawtooth';
+		o.frequency.value = 800 + i * 400 + Math.random() * 200;
+		o.connect(g); g.connect(ctx.destination);
+		const t = ctx.currentTime + i * 0.08;
+		g.gain.setValueAtTime(vol * 0.15, t);
+		g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+		o.start(t);
+		o.stop(t + 0.15);
+	}
+}
+
+export function playRepairBurst(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Warm shimmer rising tone
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'sine';
+	o.frequency.setValueAtTime(300, ctx.currentTime);
+	o.frequency.linearRampToValueAtTime(600, ctx.currentTime + 0.4);
+	o.connect(g); g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.18, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+	o.start(); o.stop(ctx.currentTime + 0.5);
+}
+
+export function playBroadside(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Heavy double cannon salvo
+	for (let i = 0; i < 4; i++) {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.type = 'square';
+		o.frequency.value = 80 + Math.random() * 40;
+		o.connect(g); g.connect(ctx.destination);
+		const t = ctx.currentTime + i * 0.04;
+		g.gain.setValueAtTime(vol * 0.2, t);
+		g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+		o.start(t); o.stop(t + 0.2);
+	}
+}
+
+export function playGhostAppear(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	// Eerie rising wail
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'sine';
+	o.frequency.setValueAtTime(200, ctx.currentTime);
+	o.frequency.exponentialRampToValueAtTime(500, ctx.currentTime + 0.6);
+	o.connect(g); g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.1, ctx.currentTime);
+	g.gain.linearRampToValueAtTime(vol * 0.15, ctx.currentTime + 0.2);
+	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+	o.start(); o.stop(ctx.currentTime + 0.8);
+}

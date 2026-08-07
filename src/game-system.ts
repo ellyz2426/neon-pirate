@@ -42,6 +42,8 @@ import {
 	createHarpoon,
 	createRopeSegment,
 	createWreckage,
+	createGhostShip,
+	createMoonMesh,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -74,6 +76,10 @@ import {
 	playHarpoonLaunch,
 	playHarpoonHit,
 	playWreckageCreak,
+	playChainLightning,
+	playRepairBurst,
+	playBroadside,
+	playGhostAppear,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -438,6 +444,19 @@ export class GameSystem extends createSystem({}) {
 	// Ship wreckage
 	private wreckages: WreckageData[] = [];
 
+	// Captain abilities
+	private captainAbility = 0; // 0=ChainLightning, 1=RepairBurst, 2=Broadside
+	private abilityCooldowns = [0, 0, 0]; // seconds remaining per ability
+	private readonly ABILITY_COOLDOWNS = [8, 12, 6]; // max cooldown per ability
+	private prevAbilityKey = false;
+	private prevAbilityCycleUp = false;
+	private prevAbilityCycleDown = false;
+
+	// Night sky
+	private moonGroup: Group | null = null;
+	private shootingStars: { mesh: Mesh; vx: number; vy: number; vz: number; life: number }[] = [];
+	private shootingStarTimer = 0;
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -487,6 +506,11 @@ export class GameSystem extends createSystem({}) {
 		// Starfield
 		const stars = createStarfield();
 		this.world.scene.add(stars);
+
+		// Moon with glow
+		this.moonGroup = createMoonMesh();
+		this.moonGroup.position.set(-60, 55, -90);
+		this.world.scene.add(this.moonGroup);
 
 		// Background islands
 		for (let i = 0; i < 4; i++) {
@@ -879,6 +903,7 @@ export class GameSystem extends createSystem({}) {
 				[EnemyType.Brigantine]: 2.5,
 				[EnemyType.Galleon]: 3,
 				[EnemyType.ManOWar]: 4,
+				[EnemyType.GhostShip]: 2.2,
 			};
 
 			this.enemies.push({
@@ -1071,39 +1096,60 @@ export class GameSystem extends createSystem({}) {
 			type = Math.random() < 0.6 ? EnemyType.Sloop : EnemyType.Brigantine;
 		} else if (this.wave < 10) {
 			const r = Math.random();
-			type = r < 0.3 ? EnemyType.Sloop : r < 0.7 ? EnemyType.Brigantine : EnemyType.Galleon;
+			if (this.wave >= 7 && r < 0.15) {
+				type = EnemyType.GhostShip;
+			} else if (r < 0.3) {
+				type = EnemyType.Sloop;
+			} else if (r < 0.7) {
+				type = EnemyType.Brigantine;
+			} else {
+				type = EnemyType.Galleon;
+			}
 		} else {
 			const r = Math.random();
-			type = r < 0.2 ? EnemyType.Sloop : r < 0.5 ? EnemyType.Brigantine : EnemyType.Galleon;
+			if (r < 0.2) {
+				type = EnemyType.GhostShip;
+			} else if (r < 0.35) {
+				type = EnemyType.Sloop;
+			} else if (r < 0.6) {
+				type = EnemyType.Brigantine;
+			} else {
+				type = EnemyType.Galleon;
+			}
 		}
 
-		const group = createEnemyShip(type, scheme);
+		const group = type === EnemyType.GhostShip ? createGhostShip(scheme) : createEnemyShip(type, scheme);
 		const angle = Math.random() * Math.PI * 2;
 		const dist = 35 + Math.random() * 15;
 		group.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
 		group.lookAt(0, 0, 0);
 		this.world.scene.add(group);
 
-		const hpMult = type === EnemyType.ManOWar ? 5 : type === EnemyType.Galleon ? 2 : type === EnemyType.Brigantine ? 1.3 : 1;
+		if (type === EnemyType.GhostShip) {
+			playGhostAppear(this.volume);
+		}
+
+		const hpMult = type === EnemyType.ManOWar ? 5 : type === EnemyType.GhostShip ? 1.5 : type === EnemyType.Galleon ? 2 : type === EnemyType.Brigantine ? 1.3 : 1;
 		const baseHp = (30 + this.wave * 5) * hpMult * diffMult;
 		const hullWidths: Record<EnemyType, number> = {
 			[EnemyType.Sloop]: 1.8,
 			[EnemyType.Brigantine]: 2.5,
 			[EnemyType.Galleon]: 3,
 			[EnemyType.ManOWar]: 4,
+			[EnemyType.GhostShip]: 2.2,
 		};
 
 		this.enemies.push({
 			group,
 			hp: baseHp,
 			maxHp: baseHp,
-			speed: type === EnemyType.Sloop ? 3 + this.wave * 0.1 : type === EnemyType.ManOWar ? 1.5 : type === EnemyType.Galleon ? 1.8 : 2.5,
-			damage: (type === EnemyType.ManOWar ? 25 : type === EnemyType.Galleon ? 15 : 10) * diffMult,
-			fireRate: type === EnemyType.ManOWar ? 0.8 : type === EnemyType.Galleon ? 1.5 : type === EnemyType.Brigantine ? 2.0 : 2.5,
+			speed: type === EnemyType.GhostShip ? 2.8 + this.wave * 0.08 : type === EnemyType.Sloop ? 3 + this.wave * 0.1 : type === EnemyType.ManOWar ? 1.5 : type === EnemyType.Galleon ? 1.8 : 2.5,
+			damage: (type === EnemyType.ManOWar ? 25 : type === EnemyType.GhostShip ? 12 : type === EnemyType.Galleon ? 15 : 10) * diffMult,
+			fireRate: type === EnemyType.ManOWar ? 0.8 : type === EnemyType.GhostShip ? 1.8 : type === EnemyType.Galleon ? 1.5 : type === EnemyType.Brigantine ? 2.0 : 2.5,
 			lastFireTime: this.time + Math.random() * 2,
 			shipType: type,
 			engageRange: type === EnemyType.ManOWar ? 30 : 20 + Math.random() * 10,
-			scoreValue: type === EnemyType.ManOWar ? 1000 : type === EnemyType.Galleon ? 300 : type === EnemyType.Brigantine ? 200 : 100,
+			scoreValue: type === EnemyType.ManOWar ? 1000 : type === EnemyType.GhostShip ? 400 : type === EnemyType.Galleon ? 300 : type === EnemyType.Brigantine ? 200 : 100,
 			isSinking: false,
 			sinkTimer: 0,
 			circleDir: Math.random() < 0.5 ? 1 : -1,
@@ -1235,6 +1281,21 @@ export class GameSystem extends createSystem({}) {
 			this.cannonballs.push({
 				mesh, vx: baseVx * 0.8, vy: 6,
 				vz: baseVz * 0.8, damage: enemy.damage * 1.5, isEnemy: true, lifetime: 0, maxLifetime: 5, trail: [],
+			});
+		} else if (enemy.shipType === EnemyType.GhostShip) {
+			// Ghost ship: ethereal shot — slightly homing, ghostly color
+			const mesh = createCannonball(true, scheme);
+			mesh.position.set(enemy.group.position.x, 2, enemy.group.position.z);
+			// Make it look ghostly
+			const ballMat = mesh.material as MeshStandardMaterial;
+			ballMat.color.set('#88ddff');
+			ballMat.emissive.set('#88ddff');
+			ballMat.transparent = true;
+			ballMat.opacity = 0.6;
+			this.world.scene.add(mesh);
+			this.cannonballs.push({
+				mesh, vx: baseVx * 1.1, vy: 3.5,
+				vz: baseVz * 1.1, damage: enemy.damage, isEnemy: true, lifetime: 0, maxLifetime: 5, trail: [],
 			});
 		} else {
 			// Sloop: single quick shot
@@ -1394,6 +1455,13 @@ export class GameSystem extends createSystem({}) {
 			this.harpoonCooldown > 0 ? `Harpoon: ${this.harpoonCooldown.toFixed(1)}s` : 'Harpoon: Ready';
 		this.hudPanel?.getElementById('hud-harpoon')?.setProperties({ text: harpText });
 
+		// Captain ability display
+		const abilityNames = ['⚡ Chain', '🔧 Repair', '💥 Broadside'];
+		const abIdx = this.captainAbility;
+		const abCd = this.abilityCooldowns[abIdx];
+		const abilityText = abCd > 0 ? `${abilityNames[abIdx]}: ${abCd.toFixed(1)}s` : `${abilityNames[abIdx]}: Ready [X]`;
+		this.hudPanel?.getElementById('hud-ability')?.setProperties({ text: abilityText });
+
 		// Kraken HP
 		if (this.krakenActive && this.kraken) {
 			this.hudPanel?.getElementById('hud-boss')?.setProperties({
@@ -1430,6 +1498,7 @@ export class GameSystem extends createSystem({}) {
 		this.updateAimReticle();
 		this.updateWeather(delta);
 		this.updateRadarBlips();
+		this.updateShootingStars(delta);
 
 		// Screen shake
 		if (this.shakeIntensity > 0.01) {
@@ -1479,6 +1548,24 @@ export class GameSystem extends createSystem({}) {
 			this.fireHarpoon();
 		}
 		this.prevHarpoonKey = harpoonKey;
+
+		// Captain abilities: cycle with 1/2/3 keys or D-pad up/down, activate with X key / Y button
+		const leftDpadUp = leftGamepad?.getButtonDown(InputComponent.Thumbstick) ?? false;
+		const yButtonDown = rightGamepad?.getButtonDown(InputComponent.A_Button) ?? false; // use left Y
+		const leftYButton = leftGamepad?.getButtonDown(InputComponent.A_Button) ?? false;
+		const abilityActivateKey = this.keys.has('x') || leftYButton;
+		const abilityCycleUp = this.keys.has('1') || this.keys.has('2') || this.keys.has('3') || leftDpadUp;
+		if (this.keys.has('1')) this.captainAbility = 0;
+		if (this.keys.has('2')) this.captainAbility = 1;
+		if (this.keys.has('3')) this.captainAbility = 2;
+		if (leftDpadUp && !this.prevAbilityCycleUp) {
+			this.captainAbility = (this.captainAbility + 1) % 3;
+		}
+		this.prevAbilityCycleUp = leftDpadUp;
+		if (abilityActivateKey && !this.prevAbilityKey && this.state === STATE_PLAYING && this.abilityCooldowns[this.captainAbility] <= 0) {
+			this.activateCaptainAbility();
+		}
+		this.prevAbilityKey = abilityActivateKey;
 
 		// Move player ship
 		if (this.state === STATE_PLAYING && this.playerShipGroup) {
@@ -1544,6 +1631,9 @@ export class GameSystem extends createSystem({}) {
 
 			if (this.dashCooldown > 0) this.dashCooldown -= delta;
 			if (this.harpoonCooldown > 0) this.harpoonCooldown -= delta;
+			for (let ab = 0; ab < 3; ab++) {
+				if (this.abilityCooldowns[ab] > 0) this.abilityCooldowns[ab] -= delta;
+			}
 
 			// Follow camera
 			this.baseCamPos.x = MathUtils.lerp(this.baseCamPos.x, this.playerShipGroup.position.x, 2 * delta);
@@ -1682,6 +1772,17 @@ export class GameSystem extends createSystem({}) {
 					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
 					enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.2 * delta;
 					enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.2 * delta;
+				} else if (enemy.shipType === EnemyType.GhostShip) {
+					// Ghost ship: erratic teleport-like drifting, phase through obstacles
+					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+					enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.7 * delta;
+					enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.7 * delta;
+					// Occasional short-range teleport
+					if (Math.random() < 0.003) {
+						const teleAngle = Math.random() * Math.PI * 2;
+						enemy.group.position.x += Math.cos(teleAngle) * 5;
+						enemy.group.position.z += Math.sin(teleAngle) * 5;
+					}
 				} else {
 					// Brigantine: standard circle strafe
 					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
@@ -1697,8 +1798,21 @@ export class GameSystem extends createSystem({}) {
 			enemy.group.lookAt(playerPos.x, 0, playerPos.z);
 			enemy.group.position.y = Math.sin(time * 1.2 + i * 0.7) * 0.12;
 
+			// Ghost ship phasing — oscillate transparency
+			if (enemy.shipType === EnemyType.GhostShip) {
+				const phase = Math.sin(time * 1.5 + i * 2.3) * 0.5 + 0.5; // 0..1
+				const opacity = 0.2 + phase * 0.6; // 0.2..0.8
+				enemy.group.traverse((child) => {
+					if ((child as Mesh).isMesh) {
+						const mat = (child as Mesh).material as MeshStandardMaterial;
+						if (mat.transparent) mat.opacity = opacity;
+					}
+				});
+			}
+
 			// Fire at player
 			if (dist < enemy.engageRange + 10 && time - enemy.lastFireTime > enemy.fireRate) {
+				// Ghost ships can fire while partially phased
 				enemy.lastFireTime = time;
 				this.fireEnemyCannon(enemy);
 			}
@@ -1918,8 +2032,9 @@ export class GameSystem extends createSystem({}) {
 		this.spawnExplosion(enemy.group.position.x, 1, enemy.group.position.z, 1.5);
 		this.spawnScorePopup(enemy.group.position.x, 2, enemy.group.position.z, points);
 
-		// Spawn wreckage debris
-		const wreckCount = enemy.shipType === EnemyType.ManOWar ? 5 :
+		// Spawn wreckage debris (ghost ships don't leave physical wreckage)
+		const wreckCount = enemy.shipType === EnemyType.GhostShip ? 0 :
+			enemy.shipType === EnemyType.ManOWar ? 5 :
 			enemy.shipType === EnemyType.Galleon ? 3 : 2;
 		for (let i = 0; i < wreckCount; i++) {
 			this.spawnWreckage(
@@ -1930,6 +2045,7 @@ export class GameSystem extends createSystem({}) {
 
 		// Treasure drop
 		const treasureValue = enemy.shipType === EnemyType.ManOWar ? 200 :
+			enemy.shipType === EnemyType.GhostShip ? 120 :
 			enemy.shipType === EnemyType.Galleon ? 100 :
 			enemy.shipType === EnemyType.Brigantine ? 60 : 30;
 		this.spawnTreasure(enemy.group.position.x, enemy.group.position.z, treasureValue);
@@ -3441,5 +3557,189 @@ export class GameSystem extends createSystem({}) {
 			this.wreckages[0].group.removeFromParent();
 			this.wreckages.shift();
 		}
+	}
+
+	// ==== CAPTAIN ABILITIES ====
+
+	private activateCaptainAbility() {
+		const ab = this.captainAbility;
+		this.abilityCooldowns[ab] = this.ABILITY_COOLDOWNS[ab];
+
+		switch (ab) {
+			case 0: this.chainLightning(); break;
+			case 1: this.repairBurst(); break;
+			case 2: this.broadsideBlast(); break;
+		}
+	}
+
+	private chainLightning() {
+		playChainLightning(this.volume);
+		const playerPos = this.playerShipGroup?.position;
+		if (!playerPos) return;
+
+		// Sort enemies by distance, pick 3 nearest non-sinking
+		const validEnemies = this.enemies
+			.filter(e => !e.isSinking)
+			.map(e => ({
+				enemy: e,
+				dist: Math.sqrt(
+					(e.group.position.x - playerPos.x) ** 2 +
+					(e.group.position.z - playerPos.z) ** 2,
+				),
+			}))
+			.sort((a, b) => a.dist - b.dist)
+			.slice(0, 3);
+
+		const scheme = getScheme(this.colorScheme);
+		let prevX = playerPos.x;
+		let prevZ = playerPos.z;
+
+		for (const { enemy } of validEnemies) {
+			const dmg = this.cannonDamage * 2;
+			enemy.hp -= dmg;
+			this.spawnExplosion(enemy.group.position.x, 1.5, enemy.group.position.z, 0.8);
+			this.spawnScorePopup(enemy.group.position.x, 3, enemy.group.position.z, Math.round(dmg));
+
+			// Lightning bolt visual: line of small spheres between targets
+			const steps = 6;
+			for (let s = 0; s <= steps; s++) {
+				const t = s / steps;
+				const lx = prevX + (enemy.group.position.x - prevX) * t + (Math.random() - 0.5) * 1.5;
+				const lz = prevZ + (enemy.group.position.z - prevZ) * t + (Math.random() - 0.5) * 1.5;
+				const boltGeo = new SphereGeometry(0.15, 4, 4);
+				const boltMat = new MeshStandardMaterial({
+					color: scheme.primary, emissive: scheme.primary, emissiveIntensity: 3,
+					transparent: true, opacity: 0.9,
+				});
+				const bolt = new Mesh(boltGeo, boltMat);
+				bolt.position.set(lx, 2 + Math.random(), lz);
+				this.world.scene.add(bolt);
+				// Auto-remove after brief flash
+				setTimeout(() => bolt.removeFromParent(), 300);
+			}
+
+			if (enemy.hp <= 0) {
+				this.sinkEnemy(enemy);
+			}
+			prevX = enemy.group.position.x;
+			prevZ = enemy.group.position.z;
+		}
+
+		this.shakeIntensity = Math.max(this.shakeIntensity, 1.0);
+	}
+
+	private repairBurst() {
+		playRepairBurst(this.volume);
+		const healAmount = this.playerMaxHp * 0.25;
+		this.playerHp = Math.min(this.playerHp + healAmount, this.playerMaxHp);
+
+		// Visual: green pulse ring expanding outward
+		if (this.playerShipGroup) {
+			const ringGeo = new RingGeometry(1, 2, 16);
+			const ringMat = new MeshStandardMaterial({
+				color: '#00ff88', emissive: '#00ff88', emissiveIntensity: 2,
+				transparent: true, opacity: 0.8, side: DoubleSide,
+			});
+			const ring = new Mesh(ringGeo, ringMat);
+			ring.position.copy(this.playerShipGroup.position);
+			ring.position.y = 1;
+			ring.rotation.x = -Math.PI / 2;
+			this.world.scene.add(ring);
+
+			// Animate expansion and fade
+			let life = 0;
+			const expandInterval = setInterval(() => {
+				life += 0.016;
+				ring.scale.setScalar(1 + life * 8);
+				const mat = ring.material as MeshStandardMaterial;
+				mat.opacity = Math.max(0, 0.8 - life * 2);
+				if (life > 0.5) {
+					clearInterval(expandInterval);
+					ring.removeFromParent();
+				}
+			}, 16);
+		}
+	}
+
+	private broadsideBlast() {
+		playBroadside(this.volume);
+		if (!this.playerShipGroup) return;
+
+		const scheme = getScheme(this.colorScheme);
+		const px = this.playerShipGroup.position.x;
+		const pz = this.playerShipGroup.position.z;
+		const dmgMult = this.hasPowerUp(PU_DAMAGE) ? 2 : 1;
+		const speed = 25;
+
+		// Fire 8 cannonballs in a circle (broadside all directions)
+		for (let i = 0; i < 8; i++) {
+			const angle = (i / 8) * Math.PI * 2;
+			const vx = Math.sin(angle) * speed;
+			const vz = -Math.cos(angle) * speed;
+
+			const mesh = createCannonball(false, scheme);
+			mesh.position.set(px + Math.sin(angle) * 2, 2, pz - Math.cos(angle) * 2);
+			this.world.scene.add(mesh);
+
+			this.spawnMuzzleFlash(mesh.position.x, 2.2, mesh.position.z);
+
+			this.cannonballs.push({
+				mesh, vx, vy: 4, vz,
+				damage: this.cannonDamage * dmgMult * 0.8,
+				isEnemy: false,
+				lifetime: 0,
+				maxLifetime: 3,
+				trail: [],
+			});
+		}
+
+		this.shakeIntensity = Math.max(this.shakeIntensity, 1.5);
+		this.sessionCannonsFired += 8;
+	}
+
+	// ==== SHOOTING STARS ====
+
+	private updateShootingStars(delta: number) {
+		this.shootingStarTimer -= delta;
+		if (this.shootingStarTimer <= 0) {
+			this.shootingStarTimer = 3 + Math.random() * 8; // every 3-11 seconds
+			this.spawnShootingStar();
+		}
+
+		for (let i = this.shootingStars.length - 1; i >= 0; i--) {
+			const star = this.shootingStars[i];
+			star.life -= delta;
+			star.mesh.position.x += star.vx * delta;
+			star.mesh.position.y += star.vy * delta;
+			star.mesh.position.z += star.vz * delta;
+			const mat = star.mesh.material as MeshStandardMaterial;
+			mat.opacity = Math.max(0, star.life * 2);
+			if (star.life <= 0) {
+				star.mesh.removeFromParent();
+				this.shootingStars.splice(i, 1);
+			}
+		}
+	}
+
+	private spawnShootingStar() {
+		const geo = new SphereGeometry(0.3, 4, 3);
+		const mat = new MeshStandardMaterial({
+			color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 3,
+			transparent: true, opacity: 1,
+		});
+		const mesh = new Mesh(geo, mat);
+		const startX = (Math.random() - 0.5) * 120;
+		const startY = 50 + Math.random() * 30;
+		const startZ = -60 - Math.random() * 40;
+		mesh.position.set(startX, startY, startZ);
+		this.world.scene.add(mesh);
+
+		this.shootingStars.push({
+			mesh,
+			vx: (Math.random() - 0.5) * 20,
+			vy: -15 - Math.random() * 10,
+			vz: Math.random() * 5,
+			life: 0.6 + Math.random() * 0.4,
+		});
 	}
 }

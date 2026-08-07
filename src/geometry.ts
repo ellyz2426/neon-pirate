@@ -157,6 +157,7 @@ export enum EnemyType {
 	Brigantine = 1,  // Medium
 	Galleon = 2,     // Slow, tough
 	ManOWar = 3,     // Boss
+	GhostShip = 4,   // Spectral, phases in/out
 }
 
 export function createEnemyShip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]): Group {
@@ -475,12 +476,14 @@ export function createRadarBlip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]
 		[EnemyType.Brigantine]: '#ffaa00',
 		[EnemyType.Galleon]: '#ff4444',
 		[EnemyType.ManOWar]: '#ff00ff',
+		[EnemyType.GhostShip]: '#66ffff',
 	};
 	const sizes: Record<EnemyType, number> = {
 		[EnemyType.Sloop]: 0.04,
 		[EnemyType.Brigantine]: 0.05,
 		[EnemyType.Galleon]: 0.06,
 		[EnemyType.ManOWar]: 0.08,
+		[EnemyType.GhostShip]: 0.06,
 	};
 	return new Mesh(
 		new SphereGeometry(sizes[type], 4, 3),
@@ -813,6 +816,108 @@ export function createSeagull(): Group {
 		wing.rotation.z = side * 0.3;
 		g.add(wing);
 	}
+
+	return g;
+}
+
+// Ghost Ship — spectral, semi-transparent vessel
+export function createGhostShip(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const ship = new Group();
+	const ghostColor = new Color('#88ddff');
+	const ghostDark = new Color('#224455');
+
+	// Hull — elongated, semi-transparent
+	const hullGeo = new BoxGeometry(2.4, 1.0, 6);
+	const hullMat = new MeshStandardMaterial({
+		color: ghostDark, emissive: ghostColor, emissiveIntensity: 0.5,
+		transparent: true, opacity: 0.45,
+	});
+	const hull = new Mesh(hullGeo, hullMat);
+	hull.position.y = 0.6;
+	ship.add(hull);
+
+	// Bow — ghostly cone
+	const bowGeo = new ConeGeometry(1.2, 2.5, 4);
+	const bowMat = new MeshStandardMaterial({
+		color: ghostDark, emissive: ghostColor, emissiveIntensity: 0.6,
+		transparent: true, opacity: 0.4,
+	});
+	const bow = new Mesh(bowGeo, bowMat);
+	bow.rotation.x = Math.PI / 2;
+	bow.position.set(0, 0.6, -4.5);
+	ship.add(bow);
+
+	// Mast — tattered, ethereal
+	const mastGeo = new CylinderGeometry(0.1, 0.1, 5, 6);
+	const mastMat = new MeshStandardMaterial({
+		color: '#556677', emissive: ghostColor, emissiveIntensity: 0.3,
+		transparent: true, opacity: 0.5,
+	});
+	const mast = new Mesh(mastGeo, mastMat);
+	mast.position.set(0, 3.6, 0);
+	ship.add(mast);
+
+	// Tattered sail — ragged triangle
+	const sailGeo = new ConeGeometry(1.5, 3, 3);
+	const sailMat = new MeshStandardMaterial({
+		color: '#445566', emissive: ghostColor, emissiveIntensity: 0.4,
+		transparent: true, opacity: 0.3, side: DoubleSide,
+	});
+	const sail = new Mesh(sailGeo, sailMat);
+	sail.position.set(0, 3.5, -0.5);
+	sail.rotation.z = Math.PI;
+	ship.add(sail);
+
+	// Ghostly glow orbs at bow and stern
+	const orbGeo = new SphereGeometry(0.35, 8, 6);
+	const orbMat = new MeshStandardMaterial({
+		color: '#aaffff', emissive: '#aaffff', emissiveIntensity: 2,
+		transparent: true, opacity: 0.7,
+	});
+	const orbBow = new Mesh(orbGeo, orbMat);
+	orbBow.position.set(0, 1.5, -4);
+	ship.add(orbBow);
+	const orbStern = new Mesh(orbGeo, orbMat);
+	orbStern.position.set(0, 1.5, 3);
+	ship.add(orbStern);
+
+	// HP bar
+	const hpBg = new Mesh(
+		new BoxGeometry(2.4, 0.12, 0.12),
+		new MeshStandardMaterial({ color: '#222222' }),
+	);
+	hpBg.position.y = 3.5;
+	hpBg.name = 'hp-bg';
+	ship.add(hpBg);
+	const hpBar = new Mesh(
+		new BoxGeometry(2.4, 0.12, 0.12),
+		new MeshStandardMaterial({ color: '#66ffff', emissive: '#66ffff', emissiveIntensity: 1 }),
+	);
+	hpBar.position.y = 3.5;
+	hpBar.name = 'hp-bar';
+	ship.add(hpBar);
+
+	return ship;
+}
+
+// Moon mesh with glow halo
+export function createMoonMesh(): Group {
+	const g = new Group();
+	const moonGeo = new SphereGeometry(3, 16, 12);
+	const moonMat = new MeshStandardMaterial({
+		color: '#eeeedd', emissive: '#aabbcc', emissiveIntensity: 0.8,
+	});
+	const moon = new Mesh(moonGeo, moonMat);
+	g.add(moon);
+
+	// Glow halo
+	const glowGeo = new SphereGeometry(4.5, 16, 12);
+	const glowMat = new MeshStandardMaterial({
+		color: '#aabbdd', emissive: '#8899bb', emissiveIntensity: 0.6,
+		transparent: true, opacity: 0.15,
+	});
+	const glow = new Mesh(glowGeo, glowMat);
+	g.add(glow);
 
 	return g;
 }
