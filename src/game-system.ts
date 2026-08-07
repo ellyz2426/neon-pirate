@@ -10,6 +10,14 @@ import {
 	DirectionalLight,
 	Color,
 	FogExp2,
+	Mesh,
+	MeshStandardMaterial,
+	SphereGeometry,
+	CylinderGeometry,
+	BoxGeometry,
+	ConeGeometry,
+	Group,
+	AdditiveBlending,
 } from '@iwsdk/core';
 
 import {
@@ -60,8 +68,7 @@ const DIFF_NORMAL = 1;
 const DIFF_HARD = 2;
 
 interface EnemyData {
-	entity: any;
-	group: any;
+	group: Group;
 	hp: number;
 	maxHp: number;
 	speed: number;
@@ -69,17 +76,17 @@ interface EnemyData {
 	fireRate: number;
 	lastFireTime: number;
 	shipType: EnemyType;
-	angle: number;
-	distance: number;
 	engageRange: number;
 	scoreValue: number;
 	isSinking: boolean;
 	sinkTimer: number;
+	circleDir: number;
+	dashCooldown: number;
+	hullWidth: number;
 }
 
 interface CannonballData {
-	entity: any;
-	mesh: any;
+	mesh: Mesh;
 	vx: number;
 	vy: number;
 	vz: number;
@@ -87,11 +94,11 @@ interface CannonballData {
 	isEnemy: boolean;
 	lifetime: number;
 	maxLifetime: number;
+	trail: Mesh[];
 }
 
 interface TreasureData {
-	entity: any;
-	group: any;
+	group: Group;
 	value: number;
 	bobPhase: number;
 	lifetime: number;
@@ -100,18 +107,24 @@ interface TreasureData {
 }
 
 interface ExplosionData {
-	entity: any;
-	group: any;
+	group: Group;
 	timer: number;
 	maxTime: number;
 }
 
 interface MineData {
-	entity: any;
-	group: any;
+	group: Group;
 	px: number;
 	pz: number;
 	bobPhase: number;
+}
+
+interface WakeParticle {
+	mesh: Mesh;
+	life: number;
+	maxLife: number;
+	vx: number;
+	vz: number;
 }
 
 // Stats stored in localStorage
@@ -126,47 +139,48 @@ interface CareerStats {
 	totalTreasureCollected: number;
 	bossesDefeated: number;
 	minesDestroyed: number;
+	longestCombo: number;
 }
 
 function loadStats(): CareerStats {
 	try {
 		const s = localStorage.getItem('neon-pirate-stats');
 		if (s) return JSON.parse(s);
-	} catch { }
+	} catch { /* empty */ }
 	return {
 		totalGames: 0, totalKills: 0, totalGoldEarned: 0,
 		totalWavesCompleted: 0, highScore: 0, bestWave: 0,
 		totalCannonsFired: 0, totalTreasureCollected: 0,
-		bossesDefeated: 0, minesDestroyed: 0,
+		bossesDefeated: 0, minesDestroyed: 0, longestCombo: 0,
 	};
 }
 
 function saveStats(s: CareerStats) {
-	try { localStorage.setItem('neon-pirate-stats', JSON.stringify(s)); } catch { }
+	try { localStorage.setItem('neon-pirate-stats', JSON.stringify(s)); } catch { /* empty */ }
 }
 
 function loadSettings(): { difficulty: number; volume: number; colorScheme: number } {
 	try {
 		const s = localStorage.getItem('neon-pirate-settings');
 		if (s) return JSON.parse(s);
-	} catch { }
+	} catch { /* empty */ }
 	return { difficulty: DIFF_NORMAL, volume: 0.7, colorScheme: 0 };
 }
 
 function saveSettings(s: { difficulty: number; volume: number; colorScheme: number }) {
-	try { localStorage.setItem('neon-pirate-settings', JSON.stringify(s)); } catch { }
+	try { localStorage.setItem('neon-pirate-settings', JSON.stringify(s)); } catch { /* empty */ }
 }
 
 function loadHighScores(): { score: number; wave: number; kills: number }[] {
 	try {
 		const s = localStorage.getItem('neon-pirate-highscores');
 		if (s) return JSON.parse(s);
-	} catch { }
+	} catch { /* empty */ }
 	return [];
 }
 
 function saveHighScores(scores: { score: number; wave: number; kills: number }[]) {
-	try { localStorage.setItem('neon-pirate-highscores', JSON.stringify(scores)); } catch { }
+	try { localStorage.setItem('neon-pirate-highscores', JSON.stringify(scores)); } catch { /* empty */ }
 }
 
 export class GameSystem extends createSystem({}) {
@@ -177,7 +191,6 @@ export class GameSystem extends createSystem({}) {
 	private playerMaxHp = 100;
 	private playerGold = 0;
 	private cannonDamage = 20;
-	private cannonRange = 40;
 	private fireRate = 1.0;
 	private playerSpeed = 3;
 	private cannonLevel = 1;
@@ -185,14 +198,15 @@ export class GameSystem extends createSystem({}) {
 	private speedLevel = 1;
 	private lastFireTime = 0;
 	private time = 0;
+	private cannonSpread = 1; // number of cannonballs per shot
+	private cannonPierce = false;
 
 	// Wave management
 	private enemiesRemaining = 0;
 	private enemiesSpawned = 0;
 	private enemiesTotal = 0;
 	private spawnTimer = 0;
-	private waveTimer = 0;
-	private waveClearTimer = 0;
+	private waveClearDelay = 0;
 
 	// Entities
 	private enemies: EnemyData[] = [];
@@ -200,30 +214,29 @@ export class GameSystem extends createSystem({}) {
 	private treasures: TreasureData[] = [];
 	private explosions: ExplosionData[] = [];
 	private mines: MineData[] = [];
+	private wakeParticles: WakeParticle[] = [];
 
 	// Player ship
-	private playerShipGroup: any = null;
-	private playerShipEntity: any = null;
+	private playerShipGroup: Group | null = null;
 	private playerAngle = 0;
+	private playerMoveX = 0;
+	private playerMoveZ = 0;
 
 	// Ocean
-	private oceanMesh: any = null;
-	private oceanEntity: any = null;
-	private starfieldGroup: any = null;
+	private oceanMesh: Mesh | null = null;
 
 	// Aiming
 	private aimAngleH = 0;
-	private aimAngleV = 0;
-	private aimIndicator: any = null;
+	private aimReticle: Mesh | null = null;
 
 	// UI panels
-	private menuPanel: UIKitMLAsset | undefined = undefined;
-	private hudPanel: UIKitMLAsset | undefined = undefined;
-	private pausePanel: UIKitMLAsset | undefined = undefined;
-	private resultsPanel: UIKitMLAsset | undefined = undefined;
-	private settingsPanel: UIKitMLAsset | undefined = undefined;
-	private statsPanel: UIKitMLAsset | undefined = undefined;
-	private shopPanel: UIKitMLAsset | undefined = undefined;
+	private menuPanel: UIKitMLAsset | undefined;
+	private hudPanel: UIKitMLAsset | undefined;
+	private pausePanel: UIKitMLAsset | undefined;
+	private resultsPanel: UIKitMLAsset | undefined;
+	private settingsPanel: UIKitMLAsset | undefined;
+	private statsPanel: UIKitMLAsset | undefined;
+	private shopPanel: UIKitMLAsset | undefined;
 
 	// Settings
 	private difficulty = DIFF_NORMAL;
@@ -237,6 +250,7 @@ export class GameSystem extends createSystem({}) {
 	private sessionTreasure = 0;
 	private combo = 0;
 	private comboTimer = 0;
+	private maxCombo = 0;
 
 	// Keyboard
 	private keys: Set<string> = new Set();
@@ -247,9 +261,20 @@ export class GameSystem extends createSystem({}) {
 	// Screen shake
 	private shakeIntensity = 0;
 	private shakeDecay = 5;
+	private baseCamPos = new Vector3(0, 8, 15);
 
 	// Boss tracking
 	private bossActive = false;
+
+	// Damage flash
+	private damageFlashTimer = 0;
+	private damageOverlay: Mesh | null = null;
+
+	// Score popups
+	private scorePopups: { mesh: Mesh; timer: number; vy: number }[] = [];
+
+	// Ambient particles (floating embers on water)
+	private ambientParticles: { mesh: Mesh; vx: number; vz: number; vy: number; life: number }[] = [];
 
 	init() {
 		const settings = loadSettings();
@@ -266,7 +291,7 @@ export class GameSystem extends createSystem({}) {
 	private setupScene() {
 		const scheme = getScheme(this.colorScheme);
 
-		// Fog
+		// Fog and background
 		this.world.scene.fog = new FogExp2(scheme.water, 0.008);
 		this.world.scene.background = new Color(scheme.water);
 
@@ -278,26 +303,87 @@ export class GameSystem extends createSystem({}) {
 		dirLight.position.set(20, 30, -10);
 		this.world.scene.add(dirLight);
 
-		// Moon/Sun
 		const moonLight = new PointLight(new Color('#aabbff'), 0.5, 200);
 		moonLight.position.set(-50, 60, -80);
 		this.world.scene.add(moonLight);
 
+		// Point lights around the play area for atmosphere
+		const lightPositions = [
+			[-30, 3, -30], [30, 3, -30], [-30, 3, 30], [30, 3, 30],
+		];
+		for (const pos of lightPositions) {
+			const light = new PointLight(new Color(scheme.primary), 0.15, 40);
+			light.position.set(pos[0], pos[1], pos[2]);
+			this.world.scene.add(light);
+		}
+
 		// Ocean
 		const oceanPlane = createOceanPlane(scheme);
 		this.oceanMesh = oceanPlane;
-		this.oceanEntity = this.world.createTransformEntity(oceanPlane);
+		this.world.createTransformEntity(oceanPlane);
 
 		// Starfield
-		this.starfieldGroup = createStarfield();
-		this.world.scene.add(this.starfieldGroup);
+		const stars = createStarfield();
+		this.world.scene.add(stars);
 
 		// Player ship
 		this.spawnPlayerShip();
+
+		// Aim reticle (floating ring showing fire direction)
+		const reticleGeo = new CylinderGeometry(0.6, 0.6, 0.05, 16, 1, true);
+		const reticleMat = new MeshStandardMaterial({
+			color: scheme.primary,
+			emissive: scheme.primary,
+			emissiveIntensity: 1.5,
+			transparent: true,
+			opacity: 0.6,
+		});
+		this.aimReticle = new Mesh(reticleGeo, reticleMat);
+		this.aimReticle.position.set(0, 0.5, -5);
+		this.world.scene.add(this.aimReticle);
+
+		// Damage overlay
+		const overlayGeo = new BoxGeometry(100, 60, 0.01);
+		const overlayMat = new MeshStandardMaterial({
+			color: '#ff0000',
+			emissive: '#ff0000',
+			emissiveIntensity: 1,
+			transparent: true,
+			opacity: 0,
+		});
+		this.damageOverlay = new Mesh(overlayGeo, overlayMat);
+		this.damageOverlay.position.set(0, 8, 14.5);
+		this.world.scene.add(this.damageOverlay);
+
+		// Ambient floating particles
+		this.spawnAmbientParticles(scheme);
 	}
 
-	private createAimIndicator(_scheme: typeof COLOR_SCHEMES[0]) {
-		// Aim indicator is handled by the cannon firing direction
+	private spawnAmbientParticles(scheme: typeof COLOR_SCHEMES[0]) {
+		for (let i = 0; i < 40; i++) {
+			const geo = new SphereGeometry(0.04 + Math.random() * 0.06, 4, 4);
+			const mat = new MeshStandardMaterial({
+				color: scheme.primary,
+				emissive: scheme.primary,
+				emissiveIntensity: 1.5,
+				transparent: true,
+				opacity: 0.4 + Math.random() * 0.4,
+			});
+			const mesh = new Mesh(geo, mat);
+			mesh.position.set(
+				(Math.random() - 0.5) * 60,
+				0.5 + Math.random() * 3,
+				(Math.random() - 0.5) * 60,
+			);
+			this.world.scene.add(mesh);
+			this.ambientParticles.push({
+				mesh,
+				vx: (Math.random() - 0.5) * 0.5,
+				vz: (Math.random() - 0.5) * 0.5,
+				vy: (Math.random() - 0.5) * 0.2,
+				life: Math.random() * 20,
+			});
+		}
 	}
 
 	private spawnPlayerShip() {
@@ -306,7 +392,7 @@ export class GameSystem extends createSystem({}) {
 			this.playerShipGroup.removeFromParent();
 		}
 		this.playerShipGroup = createPlayerShip(scheme);
-		this.playerShipEntity = this.world.createTransformEntity(this.playerShipGroup);
+		this.world.createTransformEntity(this.playerShipGroup);
 		this.playerShipGroup.position.set(0, 0, 0);
 	}
 
@@ -337,6 +423,7 @@ export class GameSystem extends createSystem({}) {
 		});
 		this.menuPanel?.getElementById('btn-settings')?.addEventListener('click', () => {
 			playMenuSelect(this.volume);
+			this.updateSettingsDisplay();
 			this.showPanel('settings');
 		});
 		this.menuPanel?.getElementById('btn-stats')?.addEventListener('click', () => {
@@ -347,92 +434,61 @@ export class GameSystem extends createSystem({}) {
 
 		// Settings buttons
 		this.settingsPanel?.getElementById('btn-diff-easy')?.addEventListener('click', () => {
-			this.difficulty = DIFF_EASY;
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.difficulty = DIFF_EASY; this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-diff-normal')?.addEventListener('click', () => {
-			this.difficulty = DIFF_NORMAL;
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.difficulty = DIFF_NORMAL; this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-diff-hard')?.addEventListener('click', () => {
-			this.difficulty = DIFF_HARD;
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.difficulty = DIFF_HARD; this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-vol-down')?.addEventListener('click', () => {
-			this.volume = Math.max(0, this.volume - 0.1);
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.volume = Math.max(0, this.volume - 0.1); this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-vol-up')?.addEventListener('click', () => {
-			this.volume = Math.min(1, this.volume + 0.1);
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.volume = Math.min(1, this.volume + 0.1); this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-color')?.addEventListener('click', () => {
 			this.colorScheme = (this.colorScheme + 1) % COLOR_SCHEMES.length;
-			this.updateSettingsDisplay();
-			playMenuSelect(this.volume);
+			this.updateSettingsDisplay(); playMenuSelect(this.volume);
 		});
 		this.settingsPanel?.getElementById('btn-settings-back')?.addEventListener('click', () => {
 			saveSettings({ difficulty: this.difficulty, volume: this.volume, colorScheme: this.colorScheme });
 			playMenuSelect(this.volume);
-			if (this.state === STATE_PAUSED) {
-				this.showPanel('pause');
-			} else {
-				this.showPanel('menu');
-			}
+			this.showPanel(this.state === STATE_PAUSED ? 'pause' : 'menu');
 		});
 
 		// Pause buttons
 		this.pausePanel?.getElementById('btn-resume')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.resumeGame();
+			playMenuSelect(this.volume); this.resumeGame();
 		});
 		this.pausePanel?.getElementById('btn-pause-settings')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.showPanel('settings');
+			playMenuSelect(this.volume); this.updateSettingsDisplay(); this.showPanel('settings');
 		});
 		this.pausePanel?.getElementById('btn-quit')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.endGame();
+			playMenuSelect(this.volume); this.endGame();
 		});
 
 		// Results buttons
 		this.resultsPanel?.getElementById('btn-retry')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.startGame();
+			playMenuSelect(this.volume); this.startGame();
 		});
 		this.resultsPanel?.getElementById('btn-results-menu')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.showPanel('menu');
-			this.state = STATE_MENU;
+			playMenuSelect(this.volume); this.showPanel('menu'); this.state = STATE_MENU;
 		});
 
 		// Stats back
 		this.statsPanel?.getElementById('btn-stats-back')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.showPanel('menu');
+			playMenuSelect(this.volume); this.showPanel('menu');
 		});
 
 		// Shop buttons
-		this.shopPanel?.getElementById('btn-upgrade-cannons')?.addEventListener('click', () => {
-			this.buyUpgrade('cannon');
-		});
-		this.shopPanel?.getElementById('btn-upgrade-hull')?.addEventListener('click', () => {
-			this.buyUpgrade('hull');
-		});
-		this.shopPanel?.getElementById('btn-upgrade-speed')?.addEventListener('click', () => {
-			this.buyUpgrade('speed');
-		});
-		this.shopPanel?.getElementById('btn-repair')?.addEventListener('click', () => {
-			this.buyUpgrade('repair');
-		});
+		this.shopPanel?.getElementById('btn-upgrade-cannons')?.addEventListener('click', () => this.buyUpgrade('cannon'));
+		this.shopPanel?.getElementById('btn-upgrade-hull')?.addEventListener('click', () => this.buyUpgrade('hull'));
+		this.shopPanel?.getElementById('btn-upgrade-speed')?.addEventListener('click', () => this.buyUpgrade('speed'));
+		this.shopPanel?.getElementById('btn-repair')?.addEventListener('click', () => this.buyUpgrade('repair'));
 		this.shopPanel?.getElementById('btn-shop-continue')?.addEventListener('click', () => {
-			playMenuSelect(this.volume);
-			this.startNextWave();
+			playMenuSelect(this.volume); this.startNextWave();
 		});
 
 		this.updateSettingsDisplay();
@@ -453,10 +509,6 @@ export class GameSystem extends createSystem({}) {
 			if (p) {
 				p.visible = name === panel || (panel === 'playing' && name === 'hud');
 			}
-		}
-
-		if (panel === 'playing') {
-			if (this.hudPanel) this.hudPanel.visible = true;
 		}
 	}
 
@@ -498,9 +550,12 @@ export class GameSystem extends createSystem({}) {
 		this.sessionTreasure = 0;
 		this.combo = 0;
 		this.comboTimer = 0;
+		this.maxCombo = 0;
 		this.bossActive = false;
+		this.cannonSpread = 1;
+		this.cannonPierce = false;
+		this.aimAngleH = 0;
 
-		// Clear any existing entities
 		this.clearAllEntities();
 		this.spawnPlayerShip();
 
@@ -518,10 +573,8 @@ export class GameSystem extends createSystem({}) {
 		this.bossActive = isBoss;
 
 		if (isBoss) {
-			// Boss wave
 			this.enemiesTotal = 2 + Math.floor(this.wave / 10);
-			// Add a boss ship
-			this.enemiesTotal++;
+			this.enemiesTotal++; // +1 for boss
 		} else {
 			this.enemiesTotal = 3 + Math.floor(this.wave * 1.2 * diffMult);
 		}
@@ -529,9 +582,9 @@ export class GameSystem extends createSystem({}) {
 		this.enemiesRemaining = this.enemiesTotal;
 		this.enemiesSpawned = 0;
 		this.spawnTimer = 0;
-		this.waveTimer = 0;
+		this.waveClearDelay = 0;
 
-		// Spawn mines on higher waves
+		// Mines on wave 3+
 		if (this.wave >= 3) {
 			const mineCount = Math.min(Math.floor(this.wave / 3), 6);
 			for (let i = 0; i < mineCount; i++) {
@@ -539,7 +592,6 @@ export class GameSystem extends createSystem({}) {
 			}
 		}
 
-		// Increase music tempo on higher waves
 		const bpm = 100 + Math.min(this.wave * 5, 60);
 		setBPM(bpm, this.volume);
 	}
@@ -571,22 +623,20 @@ export class GameSystem extends createSystem({}) {
 		stopMusic();
 		playGameOver(this.volume);
 
-		// Update stats
 		this.stats.totalKills += this.sessionKills;
 		this.stats.totalGoldEarned += this.sessionTreasure;
 		this.stats.totalCannonsFired += this.sessionCannonsFired;
+		if (this.maxCombo > this.stats.longestCombo) this.stats.longestCombo = this.maxCombo;
 		if (this.score > this.stats.highScore) this.stats.highScore = this.score;
 		if (this.wave > this.stats.bestWave) this.stats.bestWave = this.wave;
 		saveStats(this.stats);
 
-		// Update high scores
 		const highScores = loadHighScores();
 		highScores.push({ score: this.score, wave: this.wave, kills: this.sessionKills });
 		highScores.sort((a, b) => b.score - a.score);
 		if (highScores.length > 5) highScores.length = 5;
 		saveHighScores(highScores);
 
-		// Update results panel
 		this.resultsPanel?.getElementById('result-score')?.setProperties({ text: `Score: ${this.score}` });
 		this.resultsPanel?.getElementById('result-wave')?.setProperties({ text: `Wave: ${this.wave}` });
 		this.resultsPanel?.getElementById('result-kills')?.setProperties({ text: `Kills: ${this.sessionKills}` });
@@ -597,48 +647,38 @@ export class GameSystem extends createSystem({}) {
 			text: isNewHigh ? '★ NEW HIGH SCORE! ★' : `Best: ${this.stats.highScore}`
 		});
 
-		// Leaderboard
 		for (let i = 0; i < 5; i++) {
 			const entry = highScores[i];
-			const el = this.resultsPanel?.getElementById(`lb-${i}`);
-			if (el) {
-				el.setProperties({
-					text: entry ? `#${i + 1}  ${entry.score}pts  W${entry.wave}  ${entry.kills}K` : `#${i + 1}  ---`
-				});
-			}
+			this.resultsPanel?.getElementById(`lb-${i}`)?.setProperties({
+				text: entry ? `#${i + 1}  ${entry.score}pts  W${entry.wave}  ${entry.kills}K` : `#${i + 1}  ---`
+			});
 		}
 
 		this.showPanel('results');
 	}
 
 	private clearAllEntities() {
-		for (const e of this.enemies) {
-			e.group.removeFromParent();
-		}
+		for (const e of this.enemies) e.group.removeFromParent();
 		this.enemies = [];
-
 		for (const c of this.cannonballs) {
 			c.mesh.removeFromParent();
+			for (const t of c.trail) t.removeFromParent();
 		}
 		this.cannonballs = [];
-
-		for (const t of this.treasures) {
-			t.group.removeFromParent();
-		}
+		for (const t of this.treasures) t.group.removeFromParent();
 		this.treasures = [];
-
-		for (const ex of this.explosions) {
-			ex.group.removeFromParent();
-		}
+		for (const ex of this.explosions) ex.group.removeFromParent();
 		this.explosions = [];
-
-		for (const m of this.mines) {
-			m.group.removeFromParent();
-		}
+		for (const m of this.mines) m.group.removeFromParent();
 		this.mines = [];
+		for (const w of this.wakeParticles) w.mesh.removeFromParent();
+		this.wakeParticles = [];
+		for (const sp of this.scorePopups) sp.mesh.removeFromParent();
+		this.scorePopups = [];
 	}
 
-	// Spawn enemies
+	// ==== SPAWNING ====
+
 	private spawnEnemy() {
 		const scheme = getScheme(this.colorScheme);
 		const diffMult = [0.7, 1.0, 1.4][this.difficulty];
@@ -661,24 +701,22 @@ export class GameSystem extends createSystem({}) {
 		}
 
 		const group = createEnemyShip(type, scheme);
-
-		// Spawn at distance around player
 		const angle = Math.random() * Math.PI * 2;
 		const dist = 35 + Math.random() * 15;
-		const px = Math.cos(angle) * dist;
-		const pz = Math.sin(angle) * dist;
-		group.position.set(px, 0, pz);
-
-		// Face toward player
+		group.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
 		group.lookAt(0, 0, 0);
-
 		this.world.scene.add(group);
 
 		const hpMult = type === EnemyType.ManOWar ? 5 : type === EnemyType.Galleon ? 2 : type === EnemyType.Brigantine ? 1.3 : 1;
 		const baseHp = (30 + this.wave * 5) * hpMult * diffMult;
+		const hullWidths: Record<EnemyType, number> = {
+			[EnemyType.Sloop]: 1.8,
+			[EnemyType.Brigantine]: 2.5,
+			[EnemyType.Galleon]: 3,
+			[EnemyType.ManOWar]: 4,
+		};
 
-		const enemy: EnemyData = {
-			entity: null,
+		this.enemies.push({
 			group,
 			hp: baseHp,
 			maxHp: baseHp,
@@ -687,15 +725,15 @@ export class GameSystem extends createSystem({}) {
 			fireRate: type === EnemyType.ManOWar ? 0.8 : type === EnemyType.Galleon ? 1.5 : type === EnemyType.Brigantine ? 2.0 : 2.5,
 			lastFireTime: this.time + Math.random() * 2,
 			shipType: type,
-			angle,
-			distance: dist,
 			engageRange: type === EnemyType.ManOWar ? 30 : 20 + Math.random() * 10,
 			scoreValue: type === EnemyType.ManOWar ? 1000 : type === EnemyType.Galleon ? 300 : type === EnemyType.Brigantine ? 200 : 100,
 			isSinking: false,
 			sinkTimer: 0,
-		};
+			circleDir: Math.random() < 0.5 ? 1 : -1,
+			dashCooldown: 0,
+			hullWidth: hullWidths[type],
+		});
 
-		this.enemies.push(enemy);
 		this.enemiesSpawned++;
 	}
 
@@ -708,13 +746,7 @@ export class GameSystem extends createSystem({}) {
 		const pz = Math.sin(angle) * dist;
 		group.position.set(px, 0.3, pz);
 		this.world.scene.add(group);
-
-		this.mines.push({
-			entity: null,
-			group,
-			px, pz,
-			bobPhase: Math.random() * Math.PI * 2,
-		});
+		this.mines.push({ group, px, pz, bobPhase: Math.random() * Math.PI * 2 });
 	}
 
 	private firePlayerCannon() {
@@ -725,30 +757,38 @@ export class GameSystem extends createSystem({}) {
 		const scheme = getScheme(this.colorScheme);
 		playCannonFire(this.volume);
 
-		// Fire toward aim direction
 		const speed = 25;
-		const aimRadH = this.aimAngleH;
-		const vx = Math.sin(aimRadH) * speed;
-		const vz = -Math.cos(aimRadH) * speed;
-		const vy = 5; // Arc upward
+		const spreadAngles: number[] = [];
+		if (this.cannonSpread === 1) {
+			spreadAngles.push(0);
+		} else if (this.cannonSpread === 2) {
+			spreadAngles.push(-0.1, 0.1);
+		} else {
+			spreadAngles.push(-0.15, 0, 0.15);
+		}
 
-		const mesh = createCannonball(false, scheme);
-		const startX = Math.sin(aimRadH) * 2;
-		const startZ = -Math.cos(aimRadH) * 2;
-		mesh.position.set(startX, 2, startZ);
-		this.world.scene.add(mesh);
+		for (const spreadOff of spreadAngles) {
+			const aimRadH = this.aimAngleH + spreadOff;
+			const vx = Math.sin(aimRadH) * speed;
+			const vz = -Math.cos(aimRadH) * speed;
+			const vy = 5;
 
-		this.cannonballs.push({
-			entity: null,
-			mesh,
-			vx, vy, vz,
-			damage: this.cannonDamage,
-			isEnemy: false,
-			lifetime: 0,
-			maxLifetime: 4,
-		});
+			const mesh = createCannonball(false, scheme);
+			const startX = (this.playerShipGroup?.position.x || 0) + Math.sin(aimRadH) * 2;
+			const startZ = (this.playerShipGroup?.position.z || 0) - Math.cos(aimRadH) * 2;
+			mesh.position.set(startX, 2, startZ);
+			this.world.scene.add(mesh);
 
-		// Screen shake on fire
+			this.cannonballs.push({
+				mesh, vx, vy, vz,
+				damage: this.cannonDamage,
+				isEnemy: false,
+				lifetime: 0,
+				maxLifetime: 4,
+				trail: [],
+			});
+		}
+
 		this.shakeIntensity = Math.max(this.shakeIntensity, 0.3);
 	}
 
@@ -756,29 +796,40 @@ export class GameSystem extends createSystem({}) {
 		const scheme = getScheme(this.colorScheme);
 		playEnemyFire(this.volume);
 
-		// Aim toward player
-		const dx = -enemy.group.position.x;
-		const dz = -enemy.group.position.z;
+		const playerPos = this.playerShipGroup?.position || new Vector3();
+		const dx = playerPos.x - enemy.group.position.x;
+		const dz = playerPos.z - enemy.group.position.z;
 		const dist = Math.sqrt(dx * dx + dz * dz);
+		if (dist < 0.1) return;
+
 		const speed = 15;
 		const vx = (dx / dist) * speed;
 		const vz = (dz / dist) * speed;
-		const vy = 3;
 
-		const mesh = createCannonball(true, scheme);
-		mesh.position.copy(enemy.group.position);
-		mesh.position.y = 2;
-		this.world.scene.add(mesh);
+		// Boss fires multiple
+		const shots = enemy.shipType === EnemyType.ManOWar ? 3 : 1;
+		for (let s = 0; s < shots; s++) {
+			const spreadX = s === 0 ? 0 : (s === 1 ? 3 : -3);
+			const mesh = createCannonball(true, scheme);
+			mesh.position.set(
+				enemy.group.position.x + spreadX,
+				2,
+				enemy.group.position.z,
+			);
+			this.world.scene.add(mesh);
 
-		this.cannonballs.push({
-			entity: null,
-			mesh,
-			vx, vy, vz,
-			damage: enemy.damage,
-			isEnemy: true,
-			lifetime: 0,
-			maxLifetime: 4,
-		});
+			this.cannonballs.push({
+				mesh,
+				vx: vx + (Math.random() - 0.5) * 2,
+				vy: 3 + Math.random(),
+				vz: vz + (Math.random() - 0.5) * 2,
+				damage: enemy.damage,
+				isEnemy: true,
+				lifetime: 0,
+				maxLifetime: 4,
+				trail: [],
+			});
+		}
 	}
 
 	private spawnExplosion(x: number, y: number, z: number, scale: number = 1) {
@@ -787,7 +838,7 @@ export class GameSystem extends createSystem({}) {
 		group.position.set(x, y, z);
 		group.scale.setScalar(scale);
 		this.world.scene.add(group);
-		this.explosions.push({ entity: null, group, timer: 0, maxTime: 0.8 });
+		this.explosions.push({ group, timer: 0, maxTime: 0.8 });
 	}
 
 	private spawnTreasure(x: number, z: number, value: number) {
@@ -795,15 +846,45 @@ export class GameSystem extends createSystem({}) {
 		const group = createTreasure(scheme);
 		group.position.set(x, 0.5, z);
 		this.world.scene.add(group);
-		this.treasures.push({
-			entity: null,
-			group,
-			value,
-			bobPhase: Math.random() * Math.PI * 2,
-			lifetime: 0,
-			px: x, pz: z,
+		this.treasures.push({ group, value, bobPhase: Math.random() * Math.PI * 2, lifetime: 0, px: x, pz: z });
+	}
+
+	private spawnScorePopup(x: number, y: number, z: number, points: number) {
+		// Create a small glowing sphere that floats up
+		const color = points >= 500 ? '#ffdd00' : points >= 200 ? '#ff8800' : '#00ffff';
+		const geo = new SphereGeometry(0.15, 4, 4);
+		const mat = new MeshStandardMaterial({
+			color, emissive: color, emissiveIntensity: 2,
+			transparent: true, opacity: 1,
+		});
+		const mesh = new Mesh(geo, mat);
+		mesh.position.set(x, y + 1, z);
+		this.world.scene.add(mesh);
+		this.scorePopups.push({ mesh, timer: 0, vy: 2 });
+	}
+
+	private spawnWakeTrail(x: number, z: number, scheme: typeof COLOR_SCHEMES[0]) {
+		const geo = new SphereGeometry(0.08, 4, 4);
+		const mat = new MeshStandardMaterial({
+			color: scheme.primary,
+			emissive: scheme.primary,
+			emissiveIntensity: 0.8,
+			transparent: true,
+			opacity: 0.5,
+		});
+		const mesh = new Mesh(geo, mat);
+		mesh.position.set(x, 0.1, z);
+		this.world.scene.add(mesh);
+		this.wakeParticles.push({
+			mesh,
+			life: 0,
+			maxLife: 1.5,
+			vx: (Math.random() - 0.5) * 0.5,
+			vz: (Math.random() - 0.5) * 0.5,
 		});
 	}
+
+	// ==== UPGRADES ====
 
 	private buyUpgrade(type: string) {
 		const costs: Record<string, number> = {
@@ -822,7 +903,10 @@ export class GameSystem extends createSystem({}) {
 			case 'cannon':
 				this.cannonLevel++;
 				this.cannonDamage += 10;
-				this.fireRate = Math.max(0.3, this.fireRate - 0.1);
+				this.fireRate = Math.max(0.3, this.fireRate - 0.08);
+				if (this.cannonLevel === 3) this.cannonSpread = 2;
+				if (this.cannonLevel === 5) this.cannonSpread = 3;
+				if (this.cannonLevel >= 7) this.cannonPierce = true;
 				break;
 			case 'hull':
 				this.hullLevel++;
@@ -868,31 +952,24 @@ export class GameSystem extends createSystem({}) {
 		this.hudPanel?.getElementById('hud-wave')?.setProperties({ text: `Wave ${this.wave}` });
 		this.hudPanel?.getElementById('hud-gold')?.setProperties({ text: `Gold: ${this.playerGold}` });
 		this.hudPanel?.getElementById('hud-enemies')?.setProperties({ text: `Enemies: ${this.enemiesRemaining}` });
+		this.hudPanel?.getElementById('hud-combo')?.setProperties({ text: this.combo > 1 ? `Combo x${this.combo}` : '' });
 
-		if (this.combo > 1) {
-			this.hudPanel?.getElementById('hud-combo')?.setProperties({ text: `Combo x${this.combo}` });
-		} else {
-			this.hudPanel?.getElementById('hud-combo')?.setProperties({ text: '' });
-		}
-
-		// Boss HP bar
 		if (this.bossActive) {
 			const boss = this.enemies.find(e => e.shipType === EnemyType.ManOWar && !e.isSinking);
-			if (boss) {
-				const bossHpPct = Math.round((boss.hp / boss.maxHp) * 100);
-				this.hudPanel?.getElementById('hud-boss')?.setProperties({ text: `BOSS: ${bossHpPct}%` });
-			} else {
-				this.hudPanel?.getElementById('hud-boss')?.setProperties({ text: '' });
-			}
+			this.hudPanel?.getElementById('hud-boss')?.setProperties({
+				text: boss ? `BOSS: ${Math.round((boss.hp / boss.maxHp) * 100)}%` : ''
+			});
 		} else {
 			this.hudPanel?.getElementById('hud-boss')?.setProperties({ text: '' });
 		}
 	}
 
+	// ==== MAIN UPDATE ====
+
 	update(delta: number, time: number) {
 		this.time = time;
+		delta = Math.min(delta, 0.05); // Cap delta
 
-		// Handle input
 		this.handleInput(delta);
 
 		if (this.state === STATE_PLAYING) {
@@ -900,23 +977,24 @@ export class GameSystem extends createSystem({}) {
 			this.updateHUD();
 		}
 
-		// Update explosions
 		this.updateExplosions(delta);
-
-		// Animate ocean
+		this.updateScorePopups(delta);
+		this.updateWakeParticles(delta);
+		this.updateAmbientParticles(delta, time);
 		this.animateOcean(time);
+		this.updateDamageFlash(delta);
+		this.updateAimReticle();
 
 		// Screen shake
 		if (this.shakeIntensity > 0.01) {
 			const cam = this.world.camera;
-			cam.position.x += (Math.random() - 0.5) * this.shakeIntensity;
-			cam.position.y += (Math.random() - 0.5) * this.shakeIntensity;
+			cam.position.x = this.baseCamPos.x + (Math.random() - 0.5) * this.shakeIntensity;
+			cam.position.y = this.baseCamPos.y + (Math.random() - 0.5) * this.shakeIntensity;
 			this.shakeIntensity *= Math.exp(-this.shakeDecay * delta);
 		}
 	}
 
 	private handleInput(delta: number) {
-		// XR input
 		const rightGamepad = this.world.input.xr.gamepads.right;
 		const leftGamepad = this.world.input.xr.gamepads.left;
 		const leftStick = leftGamepad?.getAxesValues(InputComponent.Thumbstick);
@@ -924,7 +1002,6 @@ export class GameSystem extends createSystem({}) {
 		const triggerDown = rightGamepad?.getButtonPressed(InputComponent.Trigger) ?? false;
 		const gripDown = rightGamepad?.getButtonDown(InputComponent.Squeeze) ?? false;
 
-		// Keyboard input
 		const moveX = (this.keys.has('a') || this.keys.has('arrowleft') ? -1 : 0) +
 			(this.keys.has('d') || this.keys.has('arrowright') ? 1 : 0) +
 			(leftStick?.x || 0);
@@ -932,46 +1009,60 @@ export class GameSystem extends createSystem({}) {
 			(this.keys.has('s') || this.keys.has('arrowdown') ? 1 : 0) +
 			(leftStick?.y || 0);
 
-		// Aim with right stick or Q/E keys
 		const aimH = (this.keys.has('q') ? -1 : 0) + (this.keys.has('e') ? 1 : 0) +
 			(rightStick?.x || 0);
 		this.aimAngleH += aimH * 2 * delta;
 
-		// Fire
 		const fireKey = this.keys.has(' ') || this.keys.has('f');
 		if ((fireKey || triggerDown) && this.state === STATE_PLAYING) {
 			this.firePlayerCannon();
 		}
 
-		// Pause
 		const pauseKey = this.keys.has('escape') || this.keys.has('p') || gripDown;
 		if (pauseKey && !this.prevPauseKey) {
-			if (this.state === STATE_PLAYING) {
-				this.pauseGame();
-			} else if (this.state === STATE_PAUSED) {
-				this.resumeGame();
-			}
+			if (this.state === STATE_PLAYING) this.pauseGame();
+			else if (this.state === STATE_PAUSED) this.resumeGame();
 		}
 		this.prevPauseKey = pauseKey;
 
 		// Move player ship
 		if (this.state === STATE_PLAYING && this.playerShipGroup) {
+			this.playerMoveX = moveX;
+			this.playerMoveZ = moveZ;
+
 			this.playerShipGroup.position.x += moveX * this.playerSpeed * delta;
 			this.playerShipGroup.position.z += moveZ * this.playerSpeed * delta;
-
-			// Clamp position
 			this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
 			this.playerShipGroup.position.z = MathUtils.clamp(this.playerShipGroup.position.z, -40, 40);
 
-			// Rotate ship to face movement direction
 			if (Math.abs(moveX) > 0.1 || Math.abs(moveZ) > 0.1) {
 				const targetAngle = Math.atan2(moveX, -moveZ);
 				this.playerAngle = MathUtils.lerp(this.playerAngle, targetAngle, 5 * delta);
+
+				// Wake trail
+				const scheme = getScheme(this.colorScheme);
+				if (Math.random() < 0.3) {
+					this.spawnWakeTrail(
+						this.playerShipGroup.position.x - Math.sin(this.playerAngle) * 4 + (Math.random() - 0.5),
+						this.playerShipGroup.position.z + Math.cos(this.playerAngle) * 4 + (Math.random() - 0.5),
+						scheme,
+					);
+				}
 			}
 			this.playerShipGroup.rotation.y = this.playerAngle;
 
-			// Slight bobbing
+			// Ship roll when turning
+			this.playerShipGroup.rotation.z = -moveX * 0.08;
+
+			// Bob on water
 			this.playerShipGroup.position.y = Math.sin(this.time * 1.5) * 0.15;
+
+			// Follow camera
+			this.baseCamPos.x = MathUtils.lerp(this.baseCamPos.x, this.playerShipGroup.position.x, 2 * delta);
+			this.baseCamPos.z = MathUtils.lerp(this.baseCamPos.z, this.playerShipGroup.position.z + 15, 2 * delta);
+			this.world.camera.position.x = this.baseCamPos.x;
+			this.world.camera.position.z = this.baseCamPos.z;
+			this.world.camera.lookAt(this.playerShipGroup.position.x, 2, this.playerShipGroup.position.z);
 		}
 	}
 
@@ -984,29 +1075,23 @@ export class GameSystem extends createSystem({}) {
 			this.spawnTimer = 0;
 		}
 
-		// Update enemies
 		this.updateEnemies(delta, time);
-
-		// Update cannonballs
 		this.updateCannonballs(delta);
-
-		// Update treasures
 		this.updateTreasures(delta);
-
-		// Update mines
 		this.updateMines(delta);
 
 		// Combo decay
 		if (this.combo > 0) {
 			this.comboTimer -= delta;
-			if (this.comboTimer <= 0) {
-				this.combo = 0;
-			}
+			if (this.comboTimer <= 0) this.combo = 0;
 		}
 
-		// Check wave completion
+		// Wave completion check
 		if (this.enemiesRemaining <= 0 && this.enemiesSpawned >= this.enemiesTotal) {
-			this.waveComplete();
+			this.waveClearDelay += delta;
+			if (this.waveClearDelay > 0.5) {
+				this.waveComplete();
+			}
 		}
 	}
 
@@ -1021,33 +1106,41 @@ export class GameSystem extends createSystem({}) {
 				enemy.sinkTimer += delta;
 				enemy.group.position.y -= delta * 1.5;
 				enemy.group.rotation.z += delta * 0.5;
-				if (enemy.sinkTimer > 3) {
-					toRemove.push(i);
-				}
+				enemy.group.rotation.x += delta * 0.2;
+				if (enemy.sinkTimer > 3) toRemove.push(i);
 				continue;
 			}
 
-			// Move toward player
 			const dx = playerPos.x - enemy.group.position.x;
 			const dz = playerPos.z - enemy.group.position.z;
 			const dist = Math.sqrt(dx * dx + dz * dz);
+
+			// Dash cooldown
+			if (enemy.dashCooldown > 0) enemy.dashCooldown -= delta;
 
 			if (dist > enemy.engageRange) {
 				// Move closer
 				enemy.group.position.x += (dx / dist) * enemy.speed * delta;
 				enemy.group.position.z += (dz / dist) * enemy.speed * delta;
 			} else {
-				// Circle around player
-				const circleSpeed = enemy.speed * 0.5;
-				const circleAngle = Math.atan2(dz, dx) + Math.PI / 2;
-				enemy.group.position.x += Math.cos(circleAngle) * circleSpeed * delta;
-				enemy.group.position.z += Math.sin(circleAngle) * circleSpeed * delta;
+				// Circle strafe
+				const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+				enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.5 * delta;
+				enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.5 * delta;
+
+				// Occasional dash toward player (sloops only, hard difficulty)
+				if (enemy.shipType === EnemyType.Sloop && this.difficulty === DIFF_HARD && enemy.dashCooldown <= 0 && dist < 15) {
+					enemy.group.position.x += (dx / dist) * 8 * delta;
+					enemy.group.position.z += (dz / dist) * 8 * delta;
+					enemy.dashCooldown = 5;
+				}
+
+				// Change circle direction occasionally
+				if (Math.random() < 0.002) enemy.circleDir *= -1;
 			}
 
 			// Face player
 			enemy.group.lookAt(playerPos.x, 0, playerPos.z);
-
-			// Bob on water
 			enemy.group.position.y = Math.sin(time * 1.2 + i * 0.7) * 0.12;
 
 			// Fire at player
@@ -1061,16 +1154,18 @@ export class GameSystem extends createSystem({}) {
 			if (hpBar) {
 				const ratio = enemy.hp / enemy.maxHp;
 				hpBar.scale.x = Math.max(0.01, ratio);
-				hpBar.position.x = -(1 - ratio) * 0.4;
+				hpBar.position.x = -(1 - ratio) * (enemy.hullWidth * 0.4);
+			}
+
+			// Boss special: repair at low HP
+			if (enemy.shipType === EnemyType.ManOWar && enemy.hp < enemy.maxHp * 0.3 && Math.random() < 0.001) {
+				enemy.hp = Math.min(enemy.hp + 5, enemy.maxHp);
 			}
 		}
 
-		// Remove sunk ships
 		for (let i = toRemove.length - 1; i >= 0; i--) {
-			const idx = toRemove[i];
-			const enemy = this.enemies[idx];
-			enemy.group.removeFromParent();
-			this.enemies.splice(idx, 1);
+			this.enemies[toRemove[i]].group.removeFromParent();
+			this.enemies.splice(toRemove[i], 1);
 		}
 	}
 
@@ -1082,7 +1177,7 @@ export class GameSystem extends createSystem({}) {
 			const ball = this.cannonballs[i];
 			ball.lifetime += delta;
 
-			// Apply gravity
+			// Gravity
 			ball.vy -= 9.8 * delta;
 
 			// Move
@@ -1090,7 +1185,39 @@ export class GameSystem extends createSystem({}) {
 			ball.mesh.position.y += ball.vy * delta;
 			ball.mesh.position.z += ball.vz * delta;
 
-			// Check if hit water
+			// Trail particles
+			if (ball.lifetime < ball.maxLifetime && Math.random() < 0.4) {
+				const scheme = getScheme(this.colorScheme);
+				const trailGeo = new SphereGeometry(0.06, 4, 4);
+				const trailColor = ball.isEnemy ? '#ff2222' : scheme.primary;
+				const trailMat = new MeshStandardMaterial({
+					color: trailColor, emissive: trailColor, emissiveIntensity: 1,
+					transparent: true, opacity: 0.5,
+				});
+				const trailMesh = new Mesh(trailGeo, trailMat);
+				trailMesh.position.copy(ball.mesh.position);
+				this.world.scene.add(trailMesh);
+				ball.trail.push(trailMesh);
+				// Limit trail length
+				if (ball.trail.length > 8) {
+					ball.trail[0].removeFromParent();
+					ball.trail.shift();
+				}
+			}
+
+			// Fade trail
+			for (let t = 0; t < ball.trail.length; t++) {
+				const tm = ball.trail[t];
+				const mat = tm.material as MeshStandardMaterial;
+				mat.opacity *= 0.95;
+				if (mat.opacity < 0.05) {
+					tm.removeFromParent();
+					ball.trail.splice(t, 1);
+					t--;
+				}
+			}
+
+			// Hit water
 			if (ball.mesh.position.y < 0) {
 				playSplash(this.volume);
 				this.spawnExplosion(ball.mesh.position.x, 0.2, ball.mesh.position.z, 0.3);
@@ -1098,14 +1225,13 @@ export class GameSystem extends createSystem({}) {
 				continue;
 			}
 
-			// Lifetime
 			if (ball.lifetime > ball.maxLifetime) {
 				toRemove.push(i);
 				continue;
 			}
 
 			if (ball.isEnemy) {
-				// Check hit player
+				// Hit player check
 				const dx = ball.mesh.position.x - playerPos.x;
 				const dz = ball.mesh.position.z - playerPos.z;
 				const dist = Math.sqrt(dx * dx + dz * dz);
@@ -1114,98 +1240,120 @@ export class GameSystem extends createSystem({}) {
 					playHit(this.volume);
 					this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.5);
 					this.shakeIntensity = Math.max(this.shakeIntensity, 0.8);
+					this.damageFlashTimer = 0.3;
 					toRemove.push(i);
-
 					if (this.playerHp <= 0) {
+						this.playerHp = 0;
 						this.endGame();
 					}
 					continue;
 				}
 			} else {
-				// Check hit enemies
+				// Hit enemies
+				let hitSomething = false;
 				for (let j = 0; j < this.enemies.length; j++) {
 					const enemy = this.enemies[j];
 					if (enemy.isSinking) continue;
 
 					const dx = ball.mesh.position.x - enemy.group.position.x;
 					const dz = ball.mesh.position.z - enemy.group.position.z;
-					const hitRadius = enemy.shipType === EnemyType.ManOWar ? 5 : enemy.shipType === EnemyType.Galleon ? 3.5 : 2.5;
+					const hitRadius = enemy.hullWidth * 0.8;
 					const dist = Math.sqrt(dx * dx + dz * dz);
 
 					if (dist < hitRadius && ball.mesh.position.y < 5) {
 						enemy.hp -= ball.damage;
 						playHit(this.volume);
 						this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.6);
-						toRemove.push(i);
 
 						if (enemy.hp <= 0) {
-							// Enemy sunk
-							enemy.isSinking = true;
-							this.enemiesRemaining--;
-							this.sessionKills++;
-							this.stats.totalKills++;
+							this.sinkEnemy(enemy);
+						}
 
-							// Combo
-							this.combo++;
-							this.comboTimer = 3;
-							playCombo(this.combo, this.volume);
-
-							const multiplier = Math.min(1 + this.combo * 0.25, 3);
-							this.score += Math.round(enemy.scoreValue * multiplier);
-
-							playShipSink(this.volume);
-							this.spawnExplosion(enemy.group.position.x, 1, enemy.group.position.z, 1.5);
-
-							// Spawn treasure
-							const treasureValue = enemy.shipType === EnemyType.ManOWar ? 200 : enemy.shipType === EnemyType.Galleon ? 100 : enemy.shipType === EnemyType.Brigantine ? 60 : 30;
-							this.spawnTreasure(enemy.group.position.x, enemy.group.position.z, treasureValue);
-
-							if (enemy.shipType === EnemyType.ManOWar) {
-								this.stats.bossesDefeated++;
-								this.bossActive = false;
-								// Extra explosion for boss
-								for (let k = 0; k < 5; k++) {
-									setTimeout(() => {
-										this.spawnExplosion(
-											enemy.group.position.x + (Math.random() - 0.5) * 6,
-											Math.random() * 3,
-											enemy.group.position.z + (Math.random() - 0.5) * 6,
-											1 + Math.random(),
-										);
-										playExplosion(this.volume);
-									}, k * 200);
-								}
-							}
+						if (!this.cannonPierce) {
+							hitSomething = true;
+							toRemove.push(i);
 						}
 						break;
 					}
 				}
 
-				// Check hit mines
-				for (let j = 0; j < this.mines.length; j++) {
-					const mine = this.mines[j];
-					const dx = ball.mesh.position.x - mine.px;
-					const dz = ball.mesh.position.z - mine.pz;
-					const dist = Math.sqrt(dx * dx + dz * dz);
-					if (dist < 1.5) {
-						this.spawnExplosion(mine.px, 0.5, mine.pz, 2);
-						playMineExplode(this.volume);
-						mine.group.removeFromParent();
-						this.mines.splice(j, 1);
-						this.stats.minesDestroyed++;
-						this.score += 50;
-						toRemove.push(i);
-						break;
+				// Hit mines
+				if (!hitSomething) {
+					for (let j = 0; j < this.mines.length; j++) {
+						const mine = this.mines[j];
+						const dx = ball.mesh.position.x - mine.px;
+						const dz = ball.mesh.position.z - mine.pz;
+						if (Math.sqrt(dx * dx + dz * dz) < 1.5) {
+							this.spawnExplosion(mine.px, 0.5, mine.pz, 2);
+							playMineExplode(this.volume);
+							mine.group.removeFromParent();
+							this.mines.splice(j, 1);
+							this.stats.minesDestroyed++;
+							this.score += 50;
+							toRemove.push(i);
+							break;
+						}
 					}
 				}
 			}
 		}
 
-		for (let i = toRemove.length - 1; i >= 0; i--) {
-			const idx = toRemove[i];
+		// Remove in reverse order
+		const uniqueRemove = [...new Set(toRemove)].sort((a, b) => b - a);
+		for (const idx of uniqueRemove) {
 			if (idx < this.cannonballs.length) {
-				this.cannonballs[idx].mesh.removeFromParent();
+				const ball = this.cannonballs[idx];
+				ball.mesh.removeFromParent();
+				for (const t of ball.trail) t.removeFromParent();
 				this.cannonballs.splice(idx, 1);
+			}
+		}
+	}
+
+	private sinkEnemy(enemy: EnemyData) {
+		enemy.isSinking = true;
+		this.enemiesRemaining--;
+		this.sessionKills++;
+
+		// Combo
+		this.combo++;
+		this.comboTimer = 3;
+		if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+		playCombo(this.combo, this.volume);
+
+		const multiplier = Math.min(1 + this.combo * 0.25, 3);
+		const points = Math.round(enemy.scoreValue * multiplier);
+		this.score += points;
+
+		playShipSink(this.volume);
+		this.spawnExplosion(enemy.group.position.x, 1, enemy.group.position.z, 1.5);
+		this.spawnScorePopup(enemy.group.position.x, 2, enemy.group.position.z, points);
+
+		// Treasure drop
+		const treasureValue = enemy.shipType === EnemyType.ManOWar ? 200 :
+			enemy.shipType === EnemyType.Galleon ? 100 :
+			enemy.shipType === EnemyType.Brigantine ? 60 : 30;
+		this.spawnTreasure(enemy.group.position.x, enemy.group.position.z, treasureValue);
+
+		if (enemy.shipType === EnemyType.ManOWar) {
+			this.stats.bossesDefeated++;
+			this.bossActive = false;
+			// Chain explosions for boss
+			for (let k = 0; k < 5; k++) {
+				const ex = enemy.group.position.x + (Math.random() - 0.5) * 6;
+				const ez = enemy.group.position.z + (Math.random() - 0.5) * 6;
+				setTimeout(() => {
+					this.spawnExplosion(ex, Math.random() * 3, ez, 1 + Math.random());
+					playExplosion(this.volume);
+				}, k * 200);
+			}
+			// Extra treasure from boss
+			for (let t = 0; t < 3; t++) {
+				this.spawnTreasure(
+					enemy.group.position.x + (Math.random() - 0.5) * 5,
+					enemy.group.position.z + (Math.random() - 0.5) * 5,
+					100,
+				);
 			}
 		}
 	}
@@ -1218,18 +1366,14 @@ export class GameSystem extends createSystem({}) {
 			const t = this.treasures[i];
 			t.lifetime += delta;
 			t.bobPhase += delta * 2;
-
-			// Bob on water
 			t.group.position.y = 0.3 + Math.sin(t.bobPhase) * 0.15;
 			t.group.rotation.y += delta;
 
-			// Check player collection
 			const dx = playerPos.x - t.px;
 			const dz = playerPos.z - t.pz;
 			const dist = Math.sqrt(dx * dx + dz * dz);
 
-			if (dist < 4) {
-				// Magnet pull
+			if (dist < 5) {
 				t.px += (playerPos.x - t.px) * 3 * delta;
 				t.pz += (playerPos.z - t.pz) * 3 * delta;
 				t.group.position.x = t.px;
@@ -1241,25 +1385,23 @@ export class GameSystem extends createSystem({}) {
 					this.stats.totalTreasureCollected++;
 					this.score += t.value;
 					playTreasureCollect(this.volume);
+					this.spawnScorePopup(t.px, 1, t.pz, t.value);
 					toRemove.push(i);
 					continue;
 				}
 			}
 
-			// Lifetime
 			if (t.lifetime > 15) {
-				// Fade and sink
 				t.group.position.y -= (t.lifetime - 15) * delta * 2;
-				if (t.lifetime > 18) {
-					toRemove.push(i);
-				}
+				const mat = (t.group.children[1] as Mesh).material as MeshStandardMaterial;
+				mat.opacity = Math.max(0, 1 - (t.lifetime - 15) / 3);
+				if (t.lifetime > 18) toRemove.push(i);
 			}
 		}
 
 		for (let i = toRemove.length - 1; i >= 0; i--) {
-			const idx = toRemove[i];
-			this.treasures[idx].group.removeFromParent();
-			this.treasures.splice(idx, 1);
+			this.treasures[toRemove[i]].group.removeFromParent();
+			this.treasures.splice(toRemove[i], 1);
 		}
 	}
 
@@ -1272,21 +1414,18 @@ export class GameSystem extends createSystem({}) {
 			mine.group.position.y = 0.3 + Math.sin(mine.bobPhase * 1.5) * 0.1;
 			mine.group.rotation.y += delta * 0.5;
 
-			// Check proximity to player
 			const dx = playerPos.x - mine.px;
 			const dz = playerPos.z - mine.pz;
-			const dist = Math.sqrt(dx * dx + dz * dz);
-
-			if (dist < 3) {
-				// Mine explodes
+			if (Math.sqrt(dx * dx + dz * dz) < 3) {
 				this.spawnExplosion(mine.px, 0.5, mine.pz, 2);
 				playMineExplode(this.volume);
 				this.playerHp -= 20;
 				this.shakeIntensity = Math.max(this.shakeIntensity, 1.5);
+				this.damageFlashTimer = 0.4;
 				mine.group.removeFromParent();
 				this.mines.splice(i, 1);
-
 				if (this.playerHp <= 0) {
+					this.playerHp = 0;
 					this.endGame();
 				}
 			}
@@ -1299,10 +1438,9 @@ export class GameSystem extends createSystem({}) {
 			ex.timer += delta;
 			const progress = ex.timer / ex.maxTime;
 
-			// Move particles outward and fade
 			for (const child of ex.group.children) {
 				child.position.multiplyScalar(1 + delta * 3);
-				const mat = (child as any).material;
+				const mat = (child as Mesh).material as MeshStandardMaterial;
 				if (mat && mat.opacity !== undefined) {
 					mat.opacity = Math.max(0, 1 - progress);
 				}
@@ -1315,20 +1453,88 @@ export class GameSystem extends createSystem({}) {
 		}
 	}
 
+	private updateScorePopups(delta: number) {
+		for (let i = this.scorePopups.length - 1; i >= 0; i--) {
+			const sp = this.scorePopups[i];
+			sp.timer += delta;
+			sp.mesh.position.y += sp.vy * delta;
+			const mat = sp.mesh.material as MeshStandardMaterial;
+			mat.opacity = Math.max(0, 1 - sp.timer / 1.5);
+			sp.mesh.scale.setScalar(1 + sp.timer);
+
+			if (sp.timer > 1.5) {
+				sp.mesh.removeFromParent();
+				this.scorePopups.splice(i, 1);
+			}
+		}
+	}
+
+	private updateWakeParticles(delta: number) {
+		for (let i = this.wakeParticles.length - 1; i >= 0; i--) {
+			const w = this.wakeParticles[i];
+			w.life += delta;
+			w.mesh.position.x += w.vx * delta;
+			w.mesh.position.z += w.vz * delta;
+			const mat = w.mesh.material as MeshStandardMaterial;
+			mat.opacity = Math.max(0, 0.5 * (1 - w.life / w.maxLife));
+
+			if (w.life > w.maxLife) {
+				w.mesh.removeFromParent();
+				this.wakeParticles.splice(i, 1);
+			}
+		}
+	}
+
+	private updateAmbientParticles(delta: number, time: number) {
+		for (const p of this.ambientParticles) {
+			p.life += delta;
+			p.mesh.position.x += p.vx * delta;
+			p.mesh.position.z += p.vz * delta;
+			p.mesh.position.y = 0.5 + Math.sin(time + p.life * 2) * 0.3 + Math.sin(p.life * 0.7) * 0.5;
+
+			// Wrap around
+			if (p.mesh.position.x > 35) p.mesh.position.x = -35;
+			if (p.mesh.position.x < -35) p.mesh.position.x = 35;
+			if (p.mesh.position.z > 35) p.mesh.position.z = -35;
+			if (p.mesh.position.z < -35) p.mesh.position.z = 35;
+		}
+	}
+
+	private updateDamageFlash(delta: number) {
+		if (this.damageFlashTimer > 0) {
+			this.damageFlashTimer -= delta;
+			if (this.damageOverlay) {
+				const mat = this.damageOverlay.material as MeshStandardMaterial;
+				mat.opacity = Math.max(0, this.damageFlashTimer * 0.5);
+			}
+		}
+	}
+
+	private updateAimReticle() {
+		if (!this.aimReticle || !this.playerShipGroup) return;
+		const px = this.playerShipGroup.position.x;
+		const pz = this.playerShipGroup.position.z;
+		this.aimReticle.position.x = px + Math.sin(this.aimAngleH) * 8;
+		this.aimReticle.position.z = pz - Math.cos(this.aimAngleH) * 8;
+		this.aimReticle.position.y = 0.5 + Math.sin(this.time * 3) * 0.1;
+		this.aimReticle.rotation.y += 0.02;
+
+		// Only visible during gameplay
+		this.aimReticle.visible = this.state === STATE_PLAYING;
+	}
+
 	private waveComplete() {
 		this.state = STATE_WAVE_CLEAR;
-		this.waveClearTimer = 0;
+		this.waveClearDelay = 0;
 		this.stats.totalWavesCompleted++;
 		saveStats(this.stats);
 
 		playWaveComplete(this.volume);
 
-		// Bonus gold for wave completion
 		const waveBonus = 50 + this.wave * 20;
 		this.playerGold += waveBonus;
 		this.score += waveBonus;
 
-		// Show shop after brief delay
 		setTimeout(() => {
 			if (this.state === STATE_WAVE_CLEAR) {
 				this.state = STATE_SHOP;
@@ -1346,7 +1552,7 @@ export class GameSystem extends createSystem({}) {
 
 		for (let i = 0; i < pos.count; i++) {
 			const x = pos.getX(i);
-			const z = pos.getZ(i);
+			const z = pos.getY(i); // PlaneGeometry rotated, Y is original Z
 			const wave1 = Math.sin(x * 0.05 + time * 0.8) * 0.3;
 			const wave2 = Math.sin(z * 0.07 + time * 0.6) * 0.2;
 			const wave3 = Math.sin((x + z) * 0.03 + time * 1.2) * 0.15;
