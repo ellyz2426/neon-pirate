@@ -62,6 +62,7 @@
   <div class="stat" id="result-cannons">Cannons Fired: 0</div>
   <div class="stat" id="result-accuracy">Accuracy: 0%</div>
   <div class="stat" id="result-time">Time: 0:00</div>
+  <div class="stat" id="result-boarded"></div>
   <div class="divider"></div>
   <div class="lb-title">LEADERBOARD</div>
   <div class="lb-entry" id="lb-0">#1 ---</div>

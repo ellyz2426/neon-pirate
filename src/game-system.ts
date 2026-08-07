@@ -80,6 +80,10 @@ import {
 	playRepairBurst,
 	playBroadside,
 	playGhostAppear,
+	playBoarding,
+	playChainExplosion,
+	playFireIgnite,
+	playSignalFlare,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -114,6 +118,9 @@ interface EnemyData {
 	circleDir: number;
 	dashCooldown: number;
 	hullWidth: number;
+	onFire: boolean;
+	fireDOTTimer: number;
+	fireParticles: Mesh[];
 }
 
 interface CannonballData {
@@ -457,6 +464,22 @@ export class GameSystem extends createSystem({}) {
 	private shootingStars: { mesh: Mesh; vx: number; vy: number; vz: number; life: number }[] = [];
 	private shootingStarTimer = 0;
 
+	// Ship damage visuals
+	private smokeParticles: { mesh: Mesh; life: number; maxLife: number; vx: number; vy: number; vz: number }[] = [];
+	private fireParticles: { mesh: Mesh; life: number; maxLife: number; baseX: number; baseZ: number }[] = [];
+
+	// Boarding mechanic
+	private boardingTarget: EnemyData | null = null;
+	private boardingProgress = 0;
+	private boardingPromptVisible = false;
+	private prevBoardKey = false;
+	private totalBoarded = 0;
+
+	// Signal flare ability (replaces one captain slot)
+	private signalFlareActive = false;
+	private signalFlareTimer = 0;
+	private signalFlareMesh: Mesh | null = null;
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -788,6 +811,7 @@ export class GameSystem extends createSystem({}) {
 		this.cannonSpread = 1;
 		this.cannonPierce = false;
 		this.aimAngleH = 0;
+		this.totalBoarded = 0;
 
 		this.clearAllEntities();
 		this.spawnPlayerShip();
@@ -922,6 +946,9 @@ export class GameSystem extends createSystem({}) {
 				hullWidth: hullWidths[type],
 				circleDir: Math.random() < 0.5 ? 1 : -1,
 				dashCooldown: 0,
+				onFire: false,
+				fireDOTTimer: 0,
+				fireParticles: [],
 			});
 
 			// These don't count toward spawn quota — they're bonus enemies
@@ -1015,6 +1042,7 @@ export class GameSystem extends createSystem({}) {
 		const mins = Math.floor(elapsed / 60);
 		const secs = elapsed % 60;
 		this.resultsPanel?.getElementById('result-time')?.setProperties({ text: `Time: ${mins}:${secs.toString().padStart(2, '0')}` });
+		this.resultsPanel?.getElementById('result-boarded')?.setProperties({ text: this.totalBoarded > 0 ? `Boarded: ${this.totalBoarded}` : '' });
 
 		const isNewHigh = highScores[0]?.score === this.score;
 		this.resultsPanel?.getElementById('result-highscore')?.setProperties({
@@ -1077,6 +1105,16 @@ export class GameSystem extends createSystem({}) {
 		// Clean up wreckage
 		for (const wr of this.wreckages) wr.group.removeFromParent();
 		this.wreckages = [];
+		// Clean up smoke/fire particles
+		for (const sp of this.smokeParticles) sp.mesh.removeFromParent();
+		this.smokeParticles = [];
+		for (const fp of this.fireParticles) fp.mesh.removeFromParent();
+		this.fireParticles = [];
+		// Clean up boarding
+		this.boardingTarget = null;
+		// Clean up signal flare
+		if (this.signalFlareMesh) { this.signalFlareMesh.removeFromParent(); this.signalFlareMesh = null; }
+		this.signalFlareActive = false;
 	}
 
 	// ==== SPAWNING ====
@@ -1155,6 +1193,9 @@ export class GameSystem extends createSystem({}) {
 			circleDir: Math.random() < 0.5 ? 1 : -1,
 			dashCooldown: 0,
 			hullWidth: hullWidths[type],
+			onFire: false,
+			fireDOTTimer: 0,
+			fireParticles: [],
 		});
 
 		this.enemiesSpawned++;
@@ -1410,7 +1451,7 @@ export class GameSystem extends createSystem({}) {
 
 		this.shopPanel?.getElementById('shop-gold')?.setProperties({ text: `Gold: ${this.playerGold}` });
 		this.shopPanel?.getElementById('shop-cannon-info')?.setProperties({
-			text: `Lv${this.cannonLevel} → Lv${this.cannonLevel + 1} (${cannonCost}g)`
+			text: `Lv${this.cannonLevel}${this.cannonLevel >= 9 ? ' 🔥' : ''} → Lv${this.cannonLevel + 1}${this.cannonLevel + 1 >= 9 ? ' 🔥FIRE' : ''} (${cannonCost}g)`
 		});
 		this.shopPanel?.getElementById('shop-hull-info')?.setProperties({
 			text: `Lv${this.hullLevel} → Lv${this.hullLevel + 1} (${hullCost}g)`
@@ -1567,6 +1608,13 @@ export class GameSystem extends createSystem({}) {
 		}
 		this.prevAbilityKey = abilityActivateKey;
 
+		// Boarding input (G key / Y button on right controller)
+		const boardKey = this.keys.has('g') || ((rightGamepad?.getButtonDown(InputComponent.B_Button) && leftGamepad?.getButtonPressed(InputComponent.Trigger)) ?? false);
+		if (boardKey && !this.prevBoardKey && this.state === STATE_PLAYING && this.boardingTarget && !this.boardingTarget.isSinking) {
+			this.executeBoarding();
+		}
+		this.prevBoardKey = boardKey ?? false;
+
 		// Move player ship
 		if (this.state === STATE_PLAYING && this.playerShipGroup) {
 			this.playerMoveX = moveX;
@@ -1672,6 +1720,9 @@ export class GameSystem extends createSystem({}) {
 		this.updateKraken(delta);
 		this.updateHarpoon(delta);
 		this.updateWreckage(delta);
+		this.updateShipDamageVisuals(delta);
+		this.updateBoarding(delta);
+		this.updateSignalFlare(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -1830,6 +1881,47 @@ export class GameSystem extends createSystem({}) {
 				enemy.hp = Math.min(enemy.hp + 5, enemy.maxHp);
 			}
 
+			// Fire DOT processing
+			if (enemy.onFire) {
+				enemy.fireDOTTimer -= delta;
+				enemy.hp -= this.cannonDamage * 0.15 * delta; // 15% cannon damage per second
+				// Fire particles on enemy
+				if (Math.random() < 0.3) {
+					const fireGeo = new SphereGeometry(0.15 + Math.random() * 0.1, 4, 3);
+					const fireMat = new MeshStandardMaterial({
+						color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+						emissive: '#ff4400', emissiveIntensity: 3,
+						transparent: true, opacity: 0.8,
+					});
+					const fireMesh = new Mesh(fireGeo, fireMat);
+					fireMesh.position.set(
+						(Math.random() - 0.5) * enemy.hullWidth,
+						1 + Math.random() * 2,
+						(Math.random() - 0.5) * 2,
+					);
+					enemy.group.add(fireMesh);
+					enemy.fireParticles.push(fireMesh);
+					if (enemy.fireParticles.length > 6) {
+						enemy.fireParticles[0].removeFromParent();
+						enemy.fireParticles.shift();
+					}
+				}
+				// Fade fire particles
+				for (const fp of enemy.fireParticles) {
+					fp.position.y += delta * 2;
+					const fmat = fp.material as MeshStandardMaterial;
+					fmat.opacity *= 0.97;
+				}
+				if (enemy.fireDOTTimer <= 0) {
+					enemy.onFire = false;
+					for (const fp of enemy.fireParticles) fp.removeFromParent();
+					enemy.fireParticles = [];
+				}
+				if (enemy.hp <= 0 && !enemy.isSinking) {
+					this.sinkEnemy(enemy);
+				}
+			}
+
 			// Avoid whirlpools
 			for (const wp of this.whirlpools) {
 				const wx = enemy.group.position.x - wp.px;
@@ -1953,6 +2045,13 @@ export class GameSystem extends createSystem({}) {
 						playHit(this.volume);
 						this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.6);
 
+						// Fire DOT: cannon level 9+ sets enemies ablaze
+						if (this.cannonLevel >= 9 && !enemy.onFire && enemy.shipType !== EnemyType.GhostShip) {
+							enemy.onFire = true;
+							enemy.fireDOTTimer = 5; // 5 seconds of fire
+							playFireIgnite(this.volume * 0.5);
+						}
+
 						if (enemy.hp <= 0) {
 							this.sinkEnemy(enemy);
 						}
@@ -2015,6 +2114,9 @@ export class GameSystem extends createSystem({}) {
 
 	private sinkEnemy(enemy: EnemyData) {
 		enemy.isSinking = true;
+		enemy.onFire = false;
+		for (const fp of enemy.fireParticles) fp.removeFromParent();
+		enemy.fireParticles = [];
 		this.enemiesRemaining--;
 		this.sessionKills++;
 
@@ -2639,6 +2741,29 @@ export class GameSystem extends createSystem({}) {
 				this.spawnExplosion(b.mesh.position.x, b.mesh.position.y, b.mesh.position.z, 0.5);
 				this.spawnSplash(b.mesh.position.x, b.mesh.position.z);
 				playBarrelBreak(this.volume);
+
+				// Chain explosion: trigger nearby barrels
+				for (let j = this.barrels.length - 1; j >= 0; j--) {
+					if (j === i) continue;
+					const ob = this.barrels[j];
+					const cdx = b.mesh.position.x - ob.mesh.position.x;
+					const cdz = b.mesh.position.z - ob.mesh.position.z;
+					if (Math.sqrt(cdx * cdx + cdz * cdz) < 6) {
+						ob.hp = 0; // trigger chain next frame
+					}
+				}
+				// Chain explosion also damages nearby enemies
+				for (const enemy of this.enemies) {
+					if (enemy.isSinking) continue;
+					const edx = b.mesh.position.x - enemy.group.position.x;
+					const edz = b.mesh.position.z - enemy.group.position.z;
+					if (Math.sqrt(edx * edx + edz * edz) < 5) {
+						enemy.hp -= 15;
+						this.spawnExplosion(enemy.group.position.x, 1.5, enemy.group.position.z, 0.6);
+						if (enemy.hp <= 0) this.sinkEnemy(enemy);
+					}
+				}
+
 				// Drop treasure or power-up
 				if (Math.random() < 0.3) {
 					this.spawnTreasure(b.mesh.position.x, b.mesh.position.z, 30 + this.wave * 5);
@@ -3695,6 +3820,183 @@ export class GameSystem extends createSystem({}) {
 
 		this.shakeIntensity = Math.max(this.shakeIntensity, 1.5);
 		this.sessionCannonsFired += 8;
+	}
+
+	// ==== SHIP DAMAGE VISUALS ====
+
+	private updateShipDamageVisuals(delta: number) {
+		if (!this.playerShipGroup) return;
+		const hpRatio = this.playerHp / this.playerMaxHp;
+		const px = this.playerShipGroup.position.x;
+		const pz = this.playerShipGroup.position.z;
+
+		// Smoke when HP < 70%
+		if (hpRatio < 0.7 && Math.random() < (0.7 - hpRatio) * 0.6) {
+			const smokeGeo = new SphereGeometry(0.15 + Math.random() * 0.15, 4, 4);
+			const smokeMat = new MeshStandardMaterial({
+				color: '#444444', emissive: '#222222', emissiveIntensity: 0.3,
+				transparent: true, opacity: 0.5,
+			});
+			const smoke = new Mesh(smokeGeo, smokeMat);
+			smoke.position.set(px + (Math.random() - 0.5) * 3, 2, pz + (Math.random() - 0.5) * 2);
+			this.world.scene.add(smoke);
+			this.smokeParticles.push({
+				mesh: smoke, life: 0, maxLife: 1.5 + Math.random(),
+				vx: (Math.random() - 0.5) * 0.3, vy: 1.5 + Math.random(), vz: (Math.random() - 0.5) * 0.3,
+			});
+		}
+
+		// Fire when HP < 35%
+		if (hpRatio < 0.35 && Math.random() < (0.35 - hpRatio) * 0.8) {
+			const fireGeo = new SphereGeometry(0.1 + Math.random() * 0.12, 4, 3);
+			const colors = ['#ff2200', '#ff6600', '#ffaa00'];
+			const fireColor = colors[Math.floor(Math.random() * colors.length)];
+			const fireMat = new MeshStandardMaterial({
+				color: fireColor, emissive: fireColor, emissiveIntensity: 3,
+				transparent: true, opacity: 0.8,
+			});
+			const fire = new Mesh(fireGeo, fireMat);
+			const fx = px + (Math.random() - 0.5) * 2.5;
+			const fz = pz + (Math.random() - 0.5) * 1.5;
+			fire.position.set(fx, 1.5, fz);
+			this.world.scene.add(fire);
+			this.fireParticles.push({
+				mesh: fire, life: 0, maxLife: 0.5 + Math.random() * 0.3,
+				baseX: fx - px, baseZ: fz - pz,
+			});
+		}
+
+		// Update smoke
+		for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
+			const sp = this.smokeParticles[i];
+			sp.life += delta;
+			sp.mesh.position.x += sp.vx * delta;
+			sp.mesh.position.y += sp.vy * delta;
+			sp.mesh.position.z += sp.vz * delta;
+			sp.mesh.scale.setScalar(1 + sp.life * 1.5);
+			const mat = sp.mesh.material as MeshStandardMaterial;
+			mat.opacity = Math.max(0, 0.5 * (1 - sp.life / sp.maxLife));
+			if (sp.life >= sp.maxLife) {
+				sp.mesh.removeFromParent();
+				this.smokeParticles.splice(i, 1);
+			}
+		}
+		// Cap smoke count
+		while (this.smokeParticles.length > 20) {
+			this.smokeParticles[0].mesh.removeFromParent();
+			this.smokeParticles.shift();
+		}
+
+		// Update fire
+		for (let i = this.fireParticles.length - 1; i >= 0; i--) {
+			const fp = this.fireParticles[i];
+			fp.life += delta;
+			if (this.playerShipGroup) {
+				fp.mesh.position.x = this.playerShipGroup.position.x + fp.baseX;
+				fp.mesh.position.z = this.playerShipGroup.position.z + fp.baseZ;
+			}
+			fp.mesh.position.y += delta * 3;
+			const mat = fp.mesh.material as MeshStandardMaterial;
+			mat.opacity = Math.max(0, 0.8 * (1 - fp.life / fp.maxLife));
+			fp.mesh.scale.setScalar(1 + fp.life * 2);
+			if (fp.life >= fp.maxLife) {
+				fp.mesh.removeFromParent();
+				this.fireParticles.splice(i, 1);
+			}
+		}
+		while (this.fireParticles.length > 15) {
+			this.fireParticles[0].mesh.removeFromParent();
+			this.fireParticles.shift();
+		}
+	}
+
+	// ==== BOARDING MECHANIC ====
+
+	private updateBoarding(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+
+		// Find boardable enemy: < 25% HP, within 6 units, not sinking, not ghost
+		this.boardingTarget = null;
+		let closestDist = 6;
+		for (const enemy of this.enemies) {
+			if (enemy.isSinking || enemy.shipType === EnemyType.GhostShip) continue;
+			if (enemy.hp / enemy.maxHp > 0.25) continue;
+			const dx = playerPos.x - enemy.group.position.x;
+			const dz = playerPos.z - enemy.group.position.z;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < closestDist) {
+				closestDist = dist;
+				this.boardingTarget = enemy;
+			}
+		}
+
+		// Show boarding prompt on HUD
+		const promptText = this.boardingTarget ? '⚔ BOARD [G] ⚔' : '';
+		this.hudPanel?.getElementById('hud-boarding')?.setProperties({ text: promptText });
+	}
+
+	private executeBoarding() {
+		if (!this.boardingTarget || !this.playerShipGroup) return;
+		const enemy = this.boardingTarget;
+
+		playBoarding(this.volume);
+
+		// Board the ship: kill it and gain 3x gold + bonus score + heal
+		const goldReward = enemy.scoreValue * 3;
+		this.playerGold += goldReward;
+		this.sessionTreasure += goldReward;
+		this.score += enemy.scoreValue * 2;
+		this.playerHp = Math.min(this.playerHp + 15, this.playerMaxHp);
+		this.totalBoarded++;
+
+		// Visual: grappling hook line
+		const scheme = getScheme(this.colorScheme);
+		const hookLine = new Mesh(
+			new CylinderGeometry(0.03, 0.03, 1, 4),
+			new MeshStandardMaterial({ color: scheme.accent, emissive: scheme.accent, emissiveIntensity: 2 }),
+		);
+		const mx = (this.playerShipGroup.position.x + enemy.group.position.x) / 2;
+		const mz = (this.playerShipGroup.position.z + enemy.group.position.z) / 2;
+		const dx = enemy.group.position.x - this.playerShipGroup.position.x;
+		const dz = enemy.group.position.z - this.playerShipGroup.position.z;
+		const dist = Math.sqrt(dx * dx + dz * dz);
+		hookLine.position.set(mx, 2, mz);
+		hookLine.scale.y = dist;
+		hookLine.rotation.z = Math.PI / 2;
+		hookLine.rotation.y = Math.atan2(dx, dz);
+		this.world.scene.add(hookLine);
+		setTimeout(() => hookLine.removeFromParent(), 500);
+
+		this.spawnScorePopup(enemy.group.position.x, 3, enemy.group.position.z, goldReward);
+		this.sinkEnemy(enemy);
+
+		this.boardingTarget = null;
+		this.shakeIntensity = Math.max(this.shakeIntensity, 1.0);
+	}
+
+	// ==== SIGNAL FLARE ====
+
+	private updateSignalFlare(delta: number) {
+		if (!this.signalFlareActive) return;
+		this.signalFlareTimer -= delta;
+
+		// Signal flare mesh rises and illuminates
+		if (this.signalFlareMesh) {
+			this.signalFlareMesh.position.y += delta * 5;
+			const mat = this.signalFlareMesh.material as MeshStandardMaterial;
+			const t = this.signalFlareTimer / 6;
+			mat.opacity = Math.max(0, t * 0.9);
+			mat.emissiveIntensity = 3 + Math.sin(this.time * 8) * 1.5;
+		}
+
+		if (this.signalFlareTimer <= 0) {
+			this.signalFlareActive = false;
+			if (this.signalFlareMesh) {
+				this.signalFlareMesh.removeFromParent();
+				this.signalFlareMesh = null;
+			}
+		}
 	}
 
 	// ==== SHOOTING STARS ====

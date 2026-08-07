@@ -44,6 +44,10 @@
     height: 1;
     background-color: rgba(0, 255, 255, 0.15);
   }
+  .boarding {
+    font-size: 20;
+    color: #ffdd00;
+  }
 </style>
 <Panel class="root">
   <div class="row">
@@ -64,5 +68,6 @@
     <div class="label" id="hud-harpoon"></div>
   </div>
   <div class="label" id="hud-ability"></div>
+  <div class="boarding" id="hud-boarding"></div>
   <div class="weather" id="hud-weather"></div>
 </Panel>

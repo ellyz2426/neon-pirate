@@ -562,3 +562,94 @@ export function playGhostAppear(vol: number = 0.7) {
 	g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
 	o.start(); o.stop(ctx.currentTime + 0.8);
 }
+
+export function playBoarding(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const t = ctx.currentTime;
+	// Crunching wood + triumphant horn
+	for (let i = 0; i < 3; i++) {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.type = 'sawtooth';
+		o.frequency.setValueAtTime(80 + i * 40, t + i * 0.08);
+		o.connect(g); g.connect(ctx.destination);
+		g.gain.setValueAtTime(vol * 0.12, t + i * 0.08);
+		g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.15);
+		o.start(t + i * 0.08); o.stop(t + i * 0.08 + 0.15);
+	}
+	// Horn
+	const horn = ctx.createOscillator();
+	const hg = ctx.createGain();
+	horn.type = 'triangle';
+	horn.frequency.setValueAtTime(330, t + 0.25);
+	horn.frequency.linearRampToValueAtTime(440, t + 0.6);
+	horn.connect(hg); hg.connect(ctx.destination);
+	hg.gain.setValueAtTime(vol * 0.15, t + 0.25);
+	hg.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+	horn.start(t + 0.25); horn.stop(t + 0.8);
+}
+
+export function playChainExplosion(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const t = ctx.currentTime;
+	// Rapid cascading booms
+	for (let i = 0; i < 3; i++) {
+		const o = ctx.createOscillator();
+		const g = ctx.createGain();
+		o.type = 'square';
+		o.frequency.setValueAtTime(60 - i * 10, t + i * 0.12);
+		o.frequency.exponentialRampToValueAtTime(20, t + i * 0.12 + 0.25);
+		o.connect(g); g.connect(ctx.destination);
+		g.gain.setValueAtTime(vol * (0.2 - i * 0.04), t + i * 0.12);
+		g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.3);
+		o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.3);
+	}
+}
+
+export function playFireIgnite(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const t = ctx.currentTime;
+	// Whoosh + crackle
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'sawtooth';
+	o.frequency.setValueAtTime(400, t);
+	o.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+	o.connect(g); g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.08, t);
+	g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+	o.start(t); o.stop(t + 0.35);
+}
+
+export function playSignalFlare(vol: number = 0.7) {
+	if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+	const t = ctx.currentTime;
+	// Rising whistle then pop
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type = 'sine';
+	o.frequency.setValueAtTime(400, t);
+	o.frequency.exponentialRampToValueAtTime(2000, t + 0.4);
+	o.connect(g); g.connect(ctx.destination);
+	g.gain.setValueAtTime(vol * 0.12, t);
+	g.gain.linearRampToValueAtTime(vol * 0.08, t + 0.35);
+	g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+	o.start(t); o.stop(t + 0.5);
+	// Pop
+	const p = ctx.createOscillator();
+	const pg = ctx.createGain();
+	p.type = 'square';
+	p.frequency.setValueAtTime(150, t + 0.4);
+	p.connect(pg); pg.connect(ctx.destination);
+	pg.gain.setValueAtTime(vol * 0.15, t + 0.4);
+	pg.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+	p.start(t + 0.4); p.stop(t + 0.55);
+}
