@@ -921,3 +921,194 @@ export function createMoonMesh(): Group {
 
 	return g;
 }
+
+// ── Merchant Ship Geometry ──────────────────────────────────
+export function createMerchantShip(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const group = new Group();
+
+	// Wider hull (merchant cargo ship)
+	const hull = new Mesh(
+		new BoxGeometry(3.5, 1.2, 7),
+		new MeshStandardMaterial({
+			color: '#6B4226', emissive: '#3B2210', emissiveIntensity: 0.3,
+		}),
+	);
+	hull.position.y = 0.6;
+	group.add(hull);
+
+	// Bow
+	const bow = new Mesh(
+		new ConeGeometry(1.75, 2, 4),
+		new MeshStandardMaterial({
+			color: '#6B4226', emissive: '#3B2210', emissiveIntensity: 0.3,
+		}),
+	);
+	bow.rotation.x = Math.PI / 2;
+	bow.position.set(0, 0.6, -4.5);
+	group.add(bow);
+
+	// Stern
+	const stern = new Mesh(
+		new BoxGeometry(3.5, 2, 0.8),
+		new MeshStandardMaterial({
+			color: '#5A3620', emissive: '#2A1810', emissiveIntensity: 0.3,
+		}),
+	);
+	stern.position.set(0, 1, 3.8);
+	group.add(stern);
+
+	// Main mast
+	const mast = new Mesh(
+		new CylinderGeometry(0.08, 0.1, 6, 6),
+		new MeshStandardMaterial({ color: '#4A3018', emissive: '#1A1008', emissiveIntensity: 0.2 }),
+	);
+	mast.position.set(0, 4, -0.5);
+	group.add(mast);
+
+	// White sails (merchant identifying feature)
+	const sail = new Mesh(
+		new BoxGeometry(3, 3, 0.05),
+		new MeshStandardMaterial({
+			color: '#eeeeee', emissive: '#888888', emissiveIntensity: 0.3,
+			transparent: true, opacity: 0.9, side: DoubleSide,
+		}),
+	);
+	sail.position.set(0, 4.5, -0.5);
+	group.add(sail);
+
+	// Second smaller sail
+	const sail2 = new Mesh(
+		new BoxGeometry(2.2, 2, 0.05),
+		new MeshStandardMaterial({
+			color: '#dddddd', emissive: '#777777', emissiveIntensity: 0.25,
+			transparent: true, opacity: 0.85, side: DoubleSide,
+		}),
+	);
+	sail2.position.set(0, 3, 2);
+	group.add(sail2);
+
+	// Cargo crates on deck (3 crates)
+	const crateColors = ['#8B6914', '#7A5C10', '#9B7924'];
+	for (let i = 0; i < 3; i++) {
+		const crate = new Mesh(
+			new BoxGeometry(0.8, 0.7, 0.8),
+			new MeshStandardMaterial({
+				color: crateColors[i], emissive: '#332200', emissiveIntensity: 0.2,
+			}),
+		);
+		crate.position.set(-0.8 + i * 0.9, 1.6, 0.5 + (i % 2) * 0.5);
+		crate.rotation.y = Math.random() * 0.3;
+		group.add(crate);
+	}
+
+	// Extra stacked crate
+	const topCrate = new Mesh(
+		new BoxGeometry(0.7, 0.6, 0.7),
+		new MeshStandardMaterial({
+			color: '#A08020', emissive: '#443300', emissiveIntensity: 0.2,
+		}),
+	);
+	topCrate.position.set(0, 2.2, 0.7);
+	topCrate.rotation.y = 0.4;
+	group.add(topCrate);
+
+	// HP bar background
+	const hpBg = new Mesh(
+		new BoxGeometry(3.5, 0.12, 0.05),
+		new MeshStandardMaterial({ color: '#333333' }),
+	);
+	hpBg.position.set(0, 3, 0);
+	hpBg.name = 'hp-bg';
+	group.add(hpBg);
+
+	// HP bar foreground (yellow for neutral)
+	const hpBar = new Mesh(
+		new BoxGeometry(3.5, 0.12, 0.06),
+		new MeshStandardMaterial({ color: '#ffdd00', emissive: '#ffdd00', emissiveIntensity: 1 }),
+	);
+	hpBar.position.set(0, 3, 0);
+	hpBar.name = 'hp-bar';
+	group.add(hpBar);
+
+	group.scale.setScalar(0.6);
+	return group;
+}
+
+// ── Coral Reef Geometry ──────────────────────────────────────
+export function createCoralReef(): Group {
+	const group = new Group();
+
+	// Base reef platform — irregular shape from multiple overlapping box/sphere pieces
+	const baseMat = new MeshStandardMaterial({
+		color: '#8B3A3A', emissive: '#5A1A1A', emissiveIntensity: 0.4,
+		transparent: true, opacity: 0.85,
+	});
+
+	// Main base
+	const base = new Mesh(new BoxGeometry(6, 0.4, 5), baseMat);
+	base.position.y = -0.3;
+	group.add(base);
+
+	// Irregular edges
+	for (let i = 0; i < 5; i++) {
+		const edge = new Mesh(
+			new SphereGeometry(1.2 + Math.random() * 0.8, 6, 5),
+			baseMat.clone(),
+		);
+		const angle = (i / 5) * Math.PI * 2 + Math.random() * 0.5;
+		edge.position.set(Math.cos(angle) * 2.5, -0.2, Math.sin(angle) * 2);
+		edge.scale.y = 0.3;
+		group.add(edge);
+	}
+
+	// Coral branches — vertical spiky bits
+	const coralColors = ['#CC4444', '#AA3333', '#DD6655', '#BB5544'];
+	for (let i = 0; i < 8; i++) {
+		const branchColor = coralColors[Math.floor(Math.random() * coralColors.length)];
+		const branch = new Mesh(
+			new ConeGeometry(0.15 + Math.random() * 0.15, 0.8 + Math.random() * 0.6, 5),
+			new MeshStandardMaterial({
+				color: branchColor, emissive: branchColor, emissiveIntensity: 0.3,
+			}),
+		);
+		branch.position.set(
+			(Math.random() - 0.5) * 4,
+			0.2 + Math.random() * 0.3,
+			(Math.random() - 0.5) * 3,
+		);
+		branch.rotation.z = (Math.random() - 0.5) * 0.4;
+		group.add(branch);
+	}
+
+	// Fan coral — flat rings
+	for (let i = 0; i < 3; i++) {
+		const fan = new Mesh(
+			new RingGeometry(0.3, 0.7, 8),
+			new MeshStandardMaterial({
+				color: '#DD5555', emissive: '#AA2222', emissiveIntensity: 0.5,
+				transparent: true, opacity: 0.7, side: DoubleSide,
+			}),
+		);
+		fan.position.set(
+			(Math.random() - 0.5) * 3,
+			0.5 + Math.random() * 0.3,
+			(Math.random() - 0.5) * 2,
+		);
+		fan.rotation.set(Math.random() * 0.5, Math.random() * Math.PI, Math.random() * 0.3);
+		group.add(fan);
+	}
+
+	return group;
+}
+
+// ── Lava Rock Geometry ──────────────────────────────────────
+export function createLavaRock(): Mesh {
+	const rock = new Mesh(
+		new SphereGeometry(0.6 + Math.random() * 0.3, 6, 5),
+		new MeshStandardMaterial({
+			color: '#441100', emissive: '#ff4400', emissiveIntensity: 1.5,
+			transparent: true, opacity: 0.9,
+		}),
+	);
+	return rock;
+}

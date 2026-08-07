@@ -44,6 +44,9 @@ import {
 	createWreckage,
 	createGhostShip,
 	createMoonMesh,
+	createMerchantShip,
+	createCoralReef,
+	createLavaRock,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -84,6 +87,9 @@ import {
 	playChainExplosion,
 	playFireIgnite,
 	playSignalFlare,
+	playVolcanoRumble,
+	playLavaWhoosh,
+	playMerchantHorn,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -219,6 +225,44 @@ interface WreckageData {
 	rotSpeed: number;
 	driftX: number;
 	driftZ: number;
+}
+
+interface MerchantData {
+	group: Group;
+	hp: number;
+	maxHp: number;
+	speed: number;
+	px: number;
+	pz: number;
+	targetAngle: number;
+	fleeing: boolean;
+	fireRate: number;
+	lastFireTime: number;
+	isSinking: boolean;
+	sinkTimer: number;
+}
+
+interface CoralReefData {
+	group: Group;
+	px: number;
+	pz: number;
+	radius: number;
+}
+
+interface LavaRockData {
+	mesh: Mesh;
+	vx: number;
+	vy: number;
+	vz: number;
+	lifetime: number;
+}
+
+interface VolcanoEventData {
+	islandIndex: number;
+	timer: number;
+	glowMesh: Mesh;
+	rocks: LavaRockData[];
+	spawned: number;
 }
 
 // Power-up types
@@ -480,6 +524,21 @@ export class GameSystem extends createSystem({}) {
 	private signalFlareTimer = 0;
 	private signalFlareMesh: Mesh | null = null;
 
+	// Merchant ships
+	private merchants: MerchantData[] = [];
+	private merchantReputation = 0; // tracks reputation bonus
+	private shopDiscount = false; // 10% discount flag
+	private totalMerchantAttacks = 0;
+	private totalMerchantPasses = 0;
+
+	// Coral reefs
+	private coralReefs: CoralReefData[] = [];
+
+	// Volcanic eruption event
+	private volcanoEvent: VolcanoEventData | null = null;
+	private backgroundIslands: Group[] = [];
+	private lavaRocks: LavaRockData[] = [];
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -536,6 +595,7 @@ export class GameSystem extends createSystem({}) {
 		this.world.scene.add(this.moonGroup);
 
 		// Background islands
+		this.backgroundIslands = [];
 		for (let i = 0; i < 4; i++) {
 			const island = createIsland(scheme);
 			const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
@@ -544,6 +604,7 @@ export class GameSystem extends createSystem({}) {
 			island.scale.setScalar(0.8 + Math.random() * 0.6);
 			island.rotation.y = Math.random() * Math.PI * 2;
 			this.world.scene.add(island);
+			this.backgroundIslands.push(island);
 		}
 
 		// Seagulls
@@ -812,6 +873,10 @@ export class GameSystem extends createSystem({}) {
 		this.cannonPierce = false;
 		this.aimAngleH = 0;
 		this.totalBoarded = 0;
+		this.merchantReputation = 0;
+		this.shopDiscount = false;
+		this.totalMerchantAttacks = 0;
+		this.totalMerchantPasses = 0;
 
 		this.clearAllEntities();
 		this.spawnPlayerShip();
@@ -866,6 +931,21 @@ export class GameSystem extends createSystem({}) {
 		// Formation spawn on wave 4+
 		if (this.wave >= 4 && !isBoss && Math.random() < 0.4) {
 			this.spawnFormation();
+		}
+
+		// Coral reefs — spawn once at wave 1, persist all game
+		if (this.wave === 1) {
+			this.spawnCoralReefs();
+		}
+
+		// Merchant ships — spawn between waves (wave 2+, not boss waves)
+		if (this.wave >= 2 && !isBoss) {
+			this.spawnMerchant();
+		}
+
+		// Volcanic island event — 10% chance per wave after wave 5
+		if (this.wave > 5 && Math.random() < 0.1) {
+			this.triggerVolcanoEvent();
 		}
 
 		// Wave announcement
@@ -990,6 +1070,7 @@ export class GameSystem extends createSystem({}) {
 
 	private startNextWave() {
 		this.wave++;
+		this.shopDiscount = false; // Consume one-time discount
 		this.startWave();
 		this.state = STATE_PLAYING;
 		this.showPanel('playing');
@@ -1043,6 +1124,10 @@ export class GameSystem extends createSystem({}) {
 		const secs = elapsed % 60;
 		this.resultsPanel?.getElementById('result-time')?.setProperties({ text: `Time: ${mins}:${secs.toString().padStart(2, '0')}` });
 		this.resultsPanel?.getElementById('result-boarded')?.setProperties({ text: this.totalBoarded > 0 ? `Boarded: ${this.totalBoarded}` : '' });
+		const merchantTotal = this.totalMerchantAttacks + this.totalMerchantPasses;
+		this.resultsPanel?.getElementById('result-merchants')?.setProperties({
+			text: merchantTotal > 0 ? `Merchants: ${this.totalMerchantAttacks} raided / ${this.totalMerchantPasses} spared` : ''
+		});
 
 		const isNewHigh = highScores[0]?.score === this.score;
 		this.resultsPanel?.getElementById('result-highscore')?.setProperties({
@@ -1115,6 +1200,17 @@ export class GameSystem extends createSystem({}) {
 		// Clean up signal flare
 		if (this.signalFlareMesh) { this.signalFlareMesh.removeFromParent(); this.signalFlareMesh = null; }
 		this.signalFlareActive = false;
+		// Clean up merchants
+		for (const m of this.merchants) m.group.removeFromParent();
+		this.merchants = [];
+		// Clean up coral reefs
+		for (const cr of this.coralReefs) cr.group.removeFromParent();
+		this.coralReefs = [];
+		// Clean up volcano event
+		this.cleanupVolcanoEvent();
+		// Clean up lava rocks
+		for (const lr of this.lavaRocks) lr.mesh.removeFromParent();
+		this.lavaRocks = [];
 	}
 
 	// ==== SPAWNING ====
@@ -1406,13 +1502,17 @@ export class GameSystem extends createSystem({}) {
 	// ==== UPGRADES ====
 
 	private buyUpgrade(type: string) {
-		const costs: Record<string, number> = {
+		const baseCosts: Record<string, number> = {
 			cannon: 100 + this.cannonLevel * 50,
 			hull: 100 + this.hullLevel * 50,
 			speed: 100 + this.speedLevel * 50,
 			repair: 50,
 		};
-		const cost = costs[type] || 0;
+		let cost = baseCosts[type] || 0;
+		// Apply merchant reputation discount
+		if (this.shopDiscount) {
+			cost = Math.round(cost * 0.9);
+		}
 		if (this.playerGold < cost) return;
 
 		this.playerGold -= cost;
@@ -1445,11 +1545,14 @@ export class GameSystem extends createSystem({}) {
 	}
 
 	private updateShopPanel() {
-		const cannonCost = 100 + this.cannonLevel * 50;
-		const hullCost = 100 + this.hullLevel * 50;
-		const speedCost = 100 + this.speedLevel * 50;
+		const discountMult = this.shopDiscount ? 0.9 : 1;
+		const cannonCost = Math.round((100 + this.cannonLevel * 50) * discountMult);
+		const hullCost = Math.round((100 + this.hullLevel * 50) * discountMult);
+		const speedCost = Math.round((100 + this.speedLevel * 50) * discountMult);
+		const repairCost = Math.round(50 * discountMult);
+		const discountLabel = this.shopDiscount ? ' 🏪-10%' : '';
 
-		this.shopPanel?.getElementById('shop-gold')?.setProperties({ text: `Gold: ${this.playerGold}` });
+		this.shopPanel?.getElementById('shop-gold')?.setProperties({ text: `Gold: ${this.playerGold}${discountLabel}` });
 		this.shopPanel?.getElementById('shop-cannon-info')?.setProperties({
 			text: `Lv${this.cannonLevel}${this.cannonLevel >= 9 ? ' 🔥' : ''} → Lv${this.cannonLevel + 1}${this.cannonLevel + 1 >= 9 ? ' 🔥FIRE' : ''} (${cannonCost}g)`
 		});
@@ -1460,7 +1563,7 @@ export class GameSystem extends createSystem({}) {
 			text: `Lv${this.speedLevel} → Lv${this.speedLevel + 1} (${speedCost}g)`
 		});
 		this.shopPanel?.getElementById('shop-repair-info')?.setProperties({
-			text: `HP: ${this.playerHp}/${this.playerMaxHp} (50g)`
+			text: `HP: ${this.playerHp}/${this.playerMaxHp} (${repairCost}g)`
 		});
 	}
 
@@ -1482,9 +1585,10 @@ export class GameSystem extends createSystem({}) {
 			this.hudPanel?.getElementById('hud-boss')?.setProperties({ text: '' });
 		}
 
-		// Active power-ups display
+		// Active power-ups display with timers
 		const puNames = ['SPD', 'DMG', 'SHD', 'REP', 'MLT'];
-		const puText = this.activePowerUps.map(p => `${puNames[p.type]} ${Math.ceil(p.timer)}s`).join(' | ');
+		const puIcons = ['🚀', '💥', '🛡', '❤', '🔫'];
+		const puText = this.activePowerUps.map(p => `${puIcons[p.type]}${puNames[p.type]} ${Math.ceil(p.timer)}s`).join(' | ');
 		this.hudPanel?.getElementById('hud-powerups')?.setProperties({ text: puText });
 
 		// Dash display
@@ -1496,12 +1600,16 @@ export class GameSystem extends createSystem({}) {
 			this.harpoonCooldown > 0 ? `Harpoon: ${this.harpoonCooldown.toFixed(1)}s` : 'Harpoon: Ready';
 		this.hudPanel?.getElementById('hud-harpoon')?.setProperties({ text: harpText });
 
-		// Captain ability display
-		const abilityNames = ['⚡ Chain', '🔧 Repair', '💥 Broadside'];
+		// Captain ability display — show all 3 cooldowns
+		const abilityNames = ['⚡ Chain', '🔧 Repair', '💥 Broad'];
 		const abIdx = this.captainAbility;
-		const abCd = this.abilityCooldowns[abIdx];
-		const abilityText = abCd > 0 ? `${abilityNames[abIdx]}: ${abCd.toFixed(1)}s` : `${abilityNames[abIdx]}: Ready [X]`;
-		this.hudPanel?.getElementById('hud-ability')?.setProperties({ text: abilityText });
+		const abParts: string[] = [];
+		for (let a = 0; a < 3; a++) {
+			const cd = this.abilityCooldowns[a];
+			const prefix = a === abIdx ? '►' : ' ';
+			abParts.push(cd > 0 ? `${prefix}${abilityNames[a]}:${cd.toFixed(0)}s` : `${prefix}${abilityNames[a]}:RDY`);
+		}
+		this.hudPanel?.getElementById('hud-ability')?.setProperties({ text: abParts.join(' ') });
 
 		// Kraken HP
 		if (this.krakenActive && this.kraken) {
@@ -1620,7 +1728,7 @@ export class GameSystem extends createSystem({}) {
 			this.playerMoveX = moveX;
 			this.playerMoveZ = moveZ;
 
-			const effectiveSpeed = this.playerSpeed * (this.hasPowerUp(PU_SPEED) ? 1.8 : 1.0);
+			const effectiveSpeed = this.playerSpeed * (this.hasPowerUp(PU_SPEED) ? 1.8 : 1.0) * this.getCoralSpeedMult(this.playerShipGroup.position.x, this.playerShipGroup.position.z);
 			this.playerShipGroup.position.x += moveX * effectiveSpeed * delta;
 			this.playerShipGroup.position.z += moveZ * effectiveSpeed * delta;
 			this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
@@ -1723,6 +1831,10 @@ export class GameSystem extends createSystem({}) {
 		this.updateShipDamageVisuals(delta);
 		this.updateBoarding(delta);
 		this.updateSignalFlare(delta);
+		this.updateMerchants(delta);
+		this.updateCoralReefEffects(delta);
+		this.updateVolcanoEvent(delta);
+		this.updateLavaRocks(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -1932,6 +2044,19 @@ export class GameSystem extends createSystem({}) {
 					enemy.group.position.z += (wz / wdist) * enemy.speed * delta;
 				}
 			}
+
+			// Avoid coral reefs (steer away)
+			for (const cr of this.coralReefs) {
+				const cx = enemy.group.position.x - cr.px;
+				const cz = enemy.group.position.z - cr.pz;
+				const cdist = Math.sqrt(cx * cx + cz * cz);
+				if (cdist < cr.radius + 4 && cdist > 0.5) {
+					// Steer away from reef center
+					const avoidStr = Math.max(0, 1 - (cdist / (cr.radius + 4))) * enemy.speed * 1.5;
+					enemy.group.position.x += (cx / cdist) * avoidStr * delta;
+					enemy.group.position.z += (cz / cdist) * avoidStr * delta;
+				}
+			}
 		}
 
 		for (let i = toRemove.length - 1; i >= 0; i--) {
@@ -2091,6 +2216,30 @@ export class GameSystem extends createSystem({}) {
 						const dz = ball.mesh.position.z - barrel.mesh.position.z;
 						if (Math.sqrt(dx * dx + dz * dz) < 1.2) {
 							barrel.hp -= ball.damage;
+							toRemove.push(i);
+							hitSomething = true;
+							break;
+						}
+					}
+				}
+
+				// Hit merchants
+				if (!hitSomething) {
+					for (const merchant of this.merchants) {
+						if (merchant.isSinking) continue;
+						const dx = ball.mesh.position.x - merchant.group.position.x;
+						const dz = ball.mesh.position.z - merchant.group.position.z;
+						if (Math.sqrt(dx * dx + dz * dz) < 2.5 && ball.mesh.position.y < 5) {
+							merchant.hp -= ball.damage;
+							playHit(this.volume);
+							this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.5);
+							if (!merchant.fleeing) {
+								merchant.fleeing = true;
+								this.totalMerchantAttacks++;
+							}
+							if (merchant.hp <= 0) {
+								this.sinkMerchant(merchant);
+							}
 							toRemove.push(i);
 							hitSomething = true;
 							break;
@@ -4043,5 +4192,420 @@ export class GameSystem extends createSystem({}) {
 			vz: Math.random() * 5,
 			life: 0.6 + Math.random() * 0.4,
 		});
+	}
+
+	// ==== MERCHANT SHIPS ====
+
+	private spawnMerchant() {
+		const scheme = getScheme(this.colorScheme);
+		const group = createMerchantShip(scheme);
+		// Spawn from one edge, heading to the other
+		const side = Math.floor(Math.random() * 4); // 0=N, 1=E, 2=S, 3=W
+		let px: number, pz: number, targetAngle: number;
+		switch (side) {
+			case 0: px = (Math.random() - 0.5) * 40; pz = -45; targetAngle = Math.PI; break;
+			case 1: px = 45; pz = (Math.random() - 0.5) * 40; targetAngle = Math.PI * 1.5; break;
+			case 2: px = (Math.random() - 0.5) * 40; pz = 45; targetAngle = 0; break;
+			default: px = -45; pz = (Math.random() - 0.5) * 40; targetAngle = Math.PI * 0.5; break;
+		}
+		group.position.set(px, 0, pz);
+		group.rotation.y = targetAngle;
+		this.world.scene.add(group);
+
+		const diffMult = [0.7, 1.0, 1.4][this.difficulty];
+		const maxHp = (40 + this.wave * 3) * diffMult;
+
+		this.merchants.push({
+			group, hp: maxHp, maxHp, speed: 2.5,
+			px, pz, targetAngle, fleeing: false,
+			fireRate: 3, lastFireTime: this.time,
+			isSinking: false, sinkTimer: 0,
+		});
+
+		playMerchantHorn(this.volume * 0.5);
+	}
+
+	private updateMerchants(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+		const toRemove: number[] = [];
+
+		for (let i = 0; i < this.merchants.length; i++) {
+			const m = this.merchants[i];
+
+			if (m.isSinking) {
+				m.sinkTimer += delta;
+				m.group.position.y -= delta * 1.5;
+				m.group.rotation.z += delta * 0.5;
+				if (m.sinkTimer > 3) toRemove.push(i);
+				continue;
+			}
+
+			const dx = playerPos.x - m.group.position.x;
+			const dz = playerPos.z - m.group.position.z;
+			const distToPlayer = Math.sqrt(dx * dx + dz * dz);
+
+			// Coral reef speed penalty for merchants too
+			const coralMult = this.getCoralSpeedMult(m.group.position.x, m.group.position.z);
+
+			if (m.fleeing) {
+				// Flee: move away from player
+				const fleeAngle = Math.atan2(-dx, -dz);
+				m.targetAngle = fleeAngle;
+				m.group.position.x -= (dx / Math.max(distToPlayer, 0.1)) * m.speed * 1.3 * coralMult * delta;
+				m.group.position.z -= (dz / Math.max(distToPlayer, 0.1)) * m.speed * 1.3 * coralMult * delta;
+
+				// Weak return fire when fleeing
+				if (this.time - m.lastFireTime > m.fireRate && distToPlayer < 20) {
+					m.lastFireTime = this.time;
+					this.fireMerchantCannon(m);
+				}
+			} else {
+				// Normal: sail along target heading
+				m.group.position.x += Math.sin(m.targetAngle) * m.speed * coralMult * delta;
+				m.group.position.z -= Math.cos(m.targetAngle) * m.speed * coralMult * delta;
+			}
+
+			// Smooth rotation toward target angle
+			m.group.rotation.y = MathUtils.lerp(m.group.rotation.y, m.targetAngle, delta * 3);
+
+			// Bob on water
+			m.group.position.y = Math.sin(this.time * 1.3 + i * 2) * 0.12;
+
+			// Update HP bar
+			const hpBar = m.group.getObjectByName('hp-bar');
+			if (hpBar) {
+				const ratio = m.hp / m.maxHp;
+				hpBar.scale.x = Math.max(0.01, ratio);
+			}
+
+			// Off-screen removal (passed through) = merchant spared
+			if (Math.abs(m.group.position.x) > 55 || Math.abs(m.group.position.z) > 55) {
+				if (!m.fleeing) {
+					// Merchant passed peacefully — reputation bonus
+					this.totalMerchantPasses++;
+					this.merchantReputation++;
+					this.shopDiscount = true;
+					this.spawnScorePopup(m.group.position.x, 3, m.group.position.z, 0);
+				}
+				toRemove.push(i);
+			}
+
+			// Coral reef damage to merchants
+			for (const cr of this.coralReefs) {
+				const cx = m.group.position.x - cr.px;
+				const cz = m.group.position.z - cr.pz;
+				if (Math.sqrt(cx * cx + cz * cz) < cr.radius) {
+					m.hp -= 2 * delta;
+					if (m.hp <= 0 && !m.isSinking) {
+						this.sinkMerchant(m);
+					}
+				}
+			}
+		}
+
+		for (let i = toRemove.length - 1; i >= 0; i--) {
+			this.merchants[toRemove[i]].group.removeFromParent();
+			this.merchants.splice(toRemove[i], 1);
+		}
+	}
+
+	private fireMerchantCannon(m: MerchantData) {
+		const scheme = getScheme(this.colorScheme);
+		const playerPos = this.playerShipGroup?.position || new Vector3();
+		const dx = playerPos.x - m.group.position.x;
+		const dz = playerPos.z - m.group.position.z;
+		const dist = Math.sqrt(dx * dx + dz * dz);
+		if (dist < 0.1) return;
+
+		playEnemyFire(this.volume * 0.6);
+		const speed = 12; // Slower than enemy cannons
+		const mesh = createCannonball(true, scheme);
+		mesh.position.set(m.group.position.x, 2, m.group.position.z);
+		mesh.scale.setScalar(0.7); // Smaller shot
+		this.world.scene.add(mesh);
+		const diffMult = [0.7, 1.0, 1.4][this.difficulty];
+		this.cannonballs.push({
+			mesh,
+			vx: (dx / dist) * speed + (Math.random() - 0.5) * 3,
+			vy: 3,
+			vz: (dz / dist) * speed + (Math.random() - 0.5) * 3,
+			damage: 5 * diffMult, // Weak damage
+			isEnemy: true, lifetime: 0, maxLifetime: 3, trail: [],
+		});
+	}
+
+	private sinkMerchant(m: MerchantData) {
+		m.isSinking = true;
+		playShipSink(this.volume * 0.7);
+		this.spawnExplosion(m.group.position.x, 1, m.group.position.z, 1);
+
+		// Bonus gold for attacking merchant
+		const goldReward = 80 + this.wave * 10;
+		this.playerGold += goldReward;
+		this.sessionTreasure += goldReward;
+		this.score += goldReward;
+		this.spawnScorePopup(m.group.position.x, 2, m.group.position.z, goldReward);
+
+		// Drop extra treasure
+		for (let i = 0; i < 3; i++) {
+			this.spawnTreasure(
+				m.group.position.x + (Math.random() - 0.5) * 4,
+				m.group.position.z + (Math.random() - 0.5) * 4,
+				20 + this.wave * 5,
+			);
+		}
+
+		// Wreckage
+		for (let i = 0; i < 3; i++) {
+			this.spawnWreckage(
+				m.group.position.x + (Math.random() - 0.5) * 3,
+				m.group.position.z + (Math.random() - 0.5) * 3,
+			);
+		}
+	}
+
+	// ==== CORAL REEFS ====
+
+	private spawnCoralReefs() {
+		const count = 3 + Math.floor(Math.random() * 3); // 3-5 reefs
+		for (let i = 0; i < count; i++) {
+			let px: number, pz: number;
+			let attempts = 0;
+			do {
+				px = (Math.random() - 0.5) * 60;
+				pz = (Math.random() - 0.5) * 60;
+				attempts++;
+			} while (
+				attempts < 20 &&
+				(Math.sqrt(px * px + pz * pz) < 10 || // Not too close to center
+				this.coralReefs.some(cr => Math.sqrt((cr.px - px) ** 2 + (cr.pz - pz) ** 2) < 12)) // Not too close to other reefs
+			);
+
+			const group = createCoralReef();
+			const radius = 3 + Math.random() * 1.5;
+			group.position.set(px, -0.2, pz);
+			group.scale.setScalar(radius / 4); // Scale relative to base radius
+			this.world.scene.add(group);
+			this.coralReefs.push({ group, px, pz, radius });
+		}
+	}
+
+	private getCoralSpeedMult(x: number, z: number): number {
+		for (const cr of this.coralReefs) {
+			const dx = x - cr.px;
+			const dz = z - cr.pz;
+			if (Math.sqrt(dx * dx + dz * dz) < cr.radius) {
+				return 0.6; // 40% slowdown
+			}
+		}
+		return 1.0;
+	}
+
+	private updateCoralReefEffects(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+
+		// Coral reef damage to player
+		for (const cr of this.coralReefs) {
+			const dx = playerPos.x - cr.px;
+			const dz = playerPos.z - cr.pz;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < cr.radius && !this.dashInvincible) {
+				this.playerHp -= 2 * delta; // 2 HP/sec
+				if (Math.random() < 0.05) this.damageFlashTimer = 0.1;
+				if (this.playerHp <= 0) {
+					this.playerHp = 0;
+					this.endGame();
+				}
+			}
+		}
+
+		// Coral reef damage to enemies
+		for (const enemy of this.enemies) {
+			if (enemy.isSinking) continue;
+			for (const cr of this.coralReefs) {
+				const dx = enemy.group.position.x - cr.px;
+				const dz = enemy.group.position.z - cr.pz;
+				if (Math.sqrt(dx * dx + dz * dz) < cr.radius) {
+					enemy.hp -= 2 * delta;
+					// Slow enemy in reef
+					enemy.group.position.x -= (enemy.group.position.x - cr.px) * 0.1 * delta;
+					enemy.group.position.z -= (enemy.group.position.z - cr.pz) * 0.1 * delta;
+					if (enemy.hp <= 0 && !enemy.isSinking) {
+						this.sinkEnemy(enemy);
+					}
+				}
+			}
+		}
+
+		// Subtle reef animation — slight bob
+		for (const cr of this.coralReefs) {
+			cr.group.position.y = -0.2 + Math.sin(this.time * 0.5) * 0.05;
+		}
+	}
+
+	// ==== VOLCANIC ERUPTION EVENT ====
+
+	private triggerVolcanoEvent() {
+		if (this.volcanoEvent || this.backgroundIslands.length === 0) return;
+
+		const islandIdx = Math.floor(Math.random() * this.backgroundIslands.length);
+		const island = this.backgroundIslands[islandIdx];
+
+		// Add orange glow to the island
+		const glow = new Mesh(
+			new SphereGeometry(3, 8, 6),
+			new MeshStandardMaterial({
+				color: '#ff4400', emissive: '#ff6600', emissiveIntensity: 4,
+				transparent: true, opacity: 0.6,
+			}),
+		);
+		glow.position.copy(island.position);
+		glow.position.y = 3;
+		this.world.scene.add(glow);
+
+		playVolcanoRumble(this.volume);
+		this.shakeIntensity = Math.max(this.shakeIntensity, 1.5);
+		this.showWaveAnnouncement('🌋 ERUPTION!');
+
+		this.volcanoEvent = {
+			islandIndex: islandIdx,
+			timer: 8, // 8 seconds duration
+			glowMesh: glow,
+			rocks: [],
+			spawned: 0,
+		};
+	}
+
+	private updateVolcanoEvent(delta: number) {
+		if (!this.volcanoEvent) return;
+		const v = this.volcanoEvent;
+		v.timer -= delta;
+
+		// Pulse the glow
+		const mat = v.glowMesh.material as MeshStandardMaterial;
+		mat.emissiveIntensity = 3 + Math.sin(this.time * 6) * 2;
+		mat.opacity = 0.4 + Math.sin(this.time * 4) * 0.2;
+
+		// Screen shake during eruption
+		this.shakeIntensity = Math.max(this.shakeIntensity, 0.3);
+
+		// Spawn 3-5 lava rocks, staggered over the duration
+		const totalRocks = 3 + Math.floor(Math.random() * 0.5); // Mostly 3-4
+		const spawnInterval = 6 / totalRocks; // Spread over first 6 seconds
+		if (v.timer > 2 && v.spawned < totalRocks && (8 - v.timer) > v.spawned * spawnInterval) {
+			this.spawnLavaRock(v);
+			v.spawned++;
+		}
+
+		if (v.timer <= 0) {
+			this.cleanupVolcanoEvent();
+		}
+	}
+
+	private spawnLavaRock(v: VolcanoEventData) {
+		const island = this.backgroundIslands[v.islandIndex];
+		const rock = createLavaRock();
+
+		// Start from above the island
+		rock.position.set(
+			island.position.x + (Math.random() - 0.5) * 4,
+			20 + Math.random() * 10,
+			island.position.z + (Math.random() - 0.5) * 4,
+		);
+
+		// Arc toward the play area (where ships are)
+		const targetX = (Math.random() - 0.5) * 50;
+		const targetZ = (Math.random() - 0.5) * 50;
+		const dist = Math.sqrt(
+			(targetX - rock.position.x) ** 2 + (targetZ - rock.position.z) ** 2,
+		);
+		const flightTime = 1.5 + Math.random() * 0.5;
+		const vx = (targetX - rock.position.x) / flightTime;
+		const vz = (targetZ - rock.position.z) / flightTime;
+		const vy = 5; // Upward arc at start
+
+		this.world.scene.add(rock);
+		this.lavaRocks.push({ mesh: rock, vx, vy, vz, lifetime: flightTime + 0.5 });
+
+		playLavaWhoosh(this.volume * 0.7);
+	}
+
+	private updateLavaRocks(delta: number) {
+		const playerPos = this.playerShipGroup?.position;
+
+		for (let i = this.lavaRocks.length - 1; i >= 0; i--) {
+			const lr = this.lavaRocks[i];
+			lr.lifetime -= delta;
+
+			// Gravity
+			lr.vy -= 12 * delta;
+
+			lr.mesh.position.x += lr.vx * delta;
+			lr.mesh.position.y += lr.vy * delta;
+			lr.mesh.position.z += lr.vz * delta;
+
+			// Spin
+			lr.mesh.rotation.x += delta * 5;
+			lr.mesh.rotation.z += delta * 3;
+
+			// Glow pulsing
+			const lmat = lr.mesh.material as MeshStandardMaterial;
+			lmat.emissiveIntensity = 1.5 + Math.sin(this.time * 8) * 0.5;
+
+			// Impact when hitting water level
+			if (lr.mesh.position.y < 0.5) {
+				// Damage anything near impact
+				const impactX = lr.mesh.position.x;
+				const impactZ = lr.mesh.position.z;
+
+				// Damage player
+				if (playerPos) {
+					const dx = playerPos.x - impactX;
+					const dz = playerPos.z - impactZ;
+					if (Math.sqrt(dx * dx + dz * dz) < 5 && !this.dashInvincible && !this.hasPowerUp(PU_SHIELD)) {
+						this.playerHp -= 15;
+						this.damageFlashTimer = 0.3;
+						this.shakeIntensity = Math.max(this.shakeIntensity, 1);
+						playHit(this.volume);
+						if (this.playerHp <= 0) {
+							this.playerHp = 0;
+							this.endGame();
+						}
+					}
+				}
+
+				// Damage enemies
+				for (const enemy of this.enemies) {
+					if (enemy.isSinking) continue;
+					const dx = enemy.group.position.x - impactX;
+					const dz = enemy.group.position.z - impactZ;
+					if (Math.sqrt(dx * dx + dz * dz) < 5) {
+						enemy.hp -= 15;
+						if (enemy.hp <= 0) this.sinkEnemy(enemy);
+					}
+				}
+
+				this.spawnExplosion(impactX, 0.5, impactZ, 1.5);
+				playExplosion(this.volume * 0.8);
+				this.spawnSplash(impactX, impactZ);
+				lr.mesh.removeFromParent();
+				this.lavaRocks.splice(i, 1);
+				continue;
+			}
+
+			if (lr.lifetime <= 0) {
+				lr.mesh.removeFromParent();
+				this.lavaRocks.splice(i, 1);
+			}
+		}
+	}
+
+	private cleanupVolcanoEvent() {
+		if (this.volcanoEvent) {
+			this.volcanoEvent.glowMesh.removeFromParent();
+			this.volcanoEvent = null;
+		}
 	}
 }

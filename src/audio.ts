@@ -653,3 +653,113 @@ export function playSignalFlare(vol: number = 0.7) {
 	pg.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
 	p.start(t + 0.4); p.stop(t + 0.55);
 }
+
+export function playVolcanoRumble(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+		const dur = 1.2;
+		// Deep rumble with sub-bass
+		const osc1 = ctx.createOscillator();
+		const osc2 = ctx.createOscillator();
+		const gain = ctx.createGain();
+		const filter = ctx.createBiquadFilter();
+		osc1.type = 'sawtooth';
+		osc1.frequency.setValueAtTime(35, ctx.currentTime);
+		osc1.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + dur);
+		osc2.type = 'square';
+		osc2.frequency.setValueAtTime(55, ctx.currentTime);
+		osc2.frequency.exponentialRampToValueAtTime(28, ctx.currentTime + dur);
+		filter.type = 'lowpass';
+		filter.frequency.setValueAtTime(200, ctx.currentTime);
+		filter.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + dur);
+		gain.gain.setValueAtTime(vol * 0.5, ctx.currentTime);
+		gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+		osc1.connect(filter);
+		osc2.connect(filter);
+		filter.connect(gain);
+		gain.connect(ctx.destination);
+		osc1.start();
+		osc2.start();
+		osc1.stop(ctx.currentTime + dur);
+		osc2.stop(ctx.currentTime + dur);
+
+		// Crackling noise
+		const bufSize = ctx.sampleRate * 0.4;
+		const noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+		const data = noiseBuf.getChannelData(0);
+		for (let i = 0; i < bufSize; i++) {
+			data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize) * 0.6;
+		}
+		const noiseNode = ctx.createBufferSource();
+		noiseNode.buffer = noiseBuf;
+		const noiseGain = ctx.createGain();
+		noiseGain.gain.setValueAtTime(vol * 0.25, ctx.currentTime);
+		noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+		const noiseFilt = ctx.createBiquadFilter();
+		noiseFilt.type = 'bandpass';
+		noiseFilt.frequency.value = 120;
+		noiseFilt.Q.value = 2;
+		noiseNode.connect(noiseFilt);
+		noiseFilt.connect(noiseGain);
+		noiseGain.connect(ctx.destination);
+		noiseNode.start();
+		noiseNode.stop(ctx.currentTime + 0.5);
+	} catch { /* empty */ }
+}
+
+export function playLavaWhoosh(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+		const dur = 0.6;
+		// High-frequency whoosh
+		const bufSize = ctx.sampleRate * dur;
+		const noiseBuf = ctx.createBuffer(1, bufSize | 0, ctx.sampleRate);
+		const data = noiseBuf.getChannelData(0);
+		for (let i = 0; i < (bufSize | 0); i++) {
+			const t = i / ctx.sampleRate;
+			data[i] = (Math.random() * 2 - 1) * Math.sin(t / dur * Math.PI) * 0.7;
+		}
+		const noiseNode = ctx.createBufferSource();
+		noiseNode.buffer = noiseBuf;
+		const gain = ctx.createGain();
+		gain.gain.setValueAtTime(vol * 0.3, ctx.currentTime);
+		gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+		const filter = ctx.createBiquadFilter();
+		filter.type = 'bandpass';
+		filter.frequency.setValueAtTime(2000, ctx.currentTime);
+		filter.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + dur);
+		filter.Q.value = 3;
+		noiseNode.connect(filter);
+		filter.connect(gain);
+		gain.connect(ctx.destination);
+		noiseNode.start();
+		noiseNode.stop(ctx.currentTime + dur);
+	} catch { /* empty */ }
+}
+
+export function playMerchantHorn(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+	ensureAudio();
+	const ctx = audioCtx;
+		const dur = 0.8;
+		// Low foghorn-like tone
+		const osc = ctx.createOscillator();
+		osc.type = 'triangle';
+		osc.frequency.setValueAtTime(120, ctx.currentTime);
+		osc.frequency.linearRampToValueAtTime(110, ctx.currentTime + dur);
+		const gain = ctx.createGain();
+		gain.gain.setValueAtTime(0.001, ctx.currentTime);
+		gain.gain.linearRampToValueAtTime(vol * 0.3, ctx.currentTime + 0.1);
+		gain.gain.setValueAtTime(vol * 0.3, ctx.currentTime + dur - 0.2);
+		gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.start();
+		osc.stop(ctx.currentTime + dur);
+	} catch { /* empty */ }
+}
