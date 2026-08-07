@@ -52,6 +52,10 @@ import {
 	createSeaFortress,
 	createIceberg,
 	createWaterspout,
+	createSeaSerpentHead,
+	createSeaSerpentSegment,
+	createMortarShell,
+	createChainShot,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -104,6 +108,14 @@ import {
 	playIcebergHit,
 	playWaterspoutSpin,
 	playShipLogEntry,
+	playSerpentHiss,
+	playSerpentDeath,
+	playSerpentBite,
+	playMortarLaunch,
+	playMortarImpact,
+	playChainShotFire,
+	playChainShotHit,
+	playCannonSwitch,
 	startMusic,
 	stopMusic,
 	setBPM,
@@ -326,6 +338,54 @@ interface WaterspoutData {
 interface ShipLogEntry {
 	text: string;
 	time: number; // game time when logged
+}
+
+// Sea Serpent data
+interface SeaSerpentData {
+	head: Group;
+	segments: Group[];
+	hp: number;
+	maxHp: number;
+	speed: number;
+	damage: number;
+	angle: number; // current heading
+	turnRate: number;
+	biteTimer: number; // cooldown for bite attack
+	segmentPositions: { x: number; z: number; angle: number }[];
+	isSinking: boolean;
+	sinkTimer: number;
+	scoreValue: number;
+	undulatePhase: number;
+}
+
+// Cannon types
+const CANNON_STANDARD = 0;
+const CANNON_MORTAR = 1;
+const CANNON_CHAIN = 2;
+const CANNON_TYPE_COUNT = 3;
+
+// Mortar projectile data
+interface MortarData {
+	mesh: Mesh;
+	startX: number;
+	startZ: number;
+	targetX: number;
+	targetZ: number;
+	flightTime: number;
+	elapsed: number;
+	damage: number;
+	splashRadius: number;
+}
+
+// Chain shot projectile data
+interface ChainShotData {
+	group: Group;
+	vx: number;
+	vz: number;
+	lifetime: number;
+	maxLifetime: number;
+	damage: number;
+	slowDuration: number;
 }
 
 // Treasure rarity
@@ -636,6 +696,20 @@ export class GameSystem extends createSystem({}) {
 	// Navigation hazards
 	private icebergs: IcebergData[] = [];
 	private waterspouts: WaterspoutData[] = [];
+
+	// Sea serpents
+	private seaSerpents: SeaSerpentData[] = [];
+	private serpentSpawnTimer = 0;
+
+	// Cannon type system
+	private cannonType = CANNON_STANDARD;
+	private prevCannonCycleKey = false;
+	private mortars: MortarData[] = [];
+	private chainShots: ChainShotData[] = [];
+
+	// Ship visual upgrade tracking
+	private totalUpgradeLevel = 0; // sum of cannon + hull + speed levels
+	private shipUpgradeVisuals: Mesh[] = [];
 
 	// Ship log
 	private shipLog: ShipLogEntry[] = [];
@@ -1131,6 +1205,14 @@ export class GameSystem extends createSystem({}) {
 		if (this.wave % 10 === 0) {
 			setTimeout(() => this.spawnKraken(), 3000);
 		}
+
+		// Sea serpent encounter on waves 8, 13, 18, 23, ...
+		if (this.wave >= 8 && (this.wave - 8) % 5 === 0) {
+			const serpentCount = Math.min(1 + Math.floor((this.wave - 8) / 10), 3);
+			for (let i = 0; i < serpentCount; i++) {
+				setTimeout(() => this.spawnSeaSerpent(), 2000 + i * 3000);
+			}
+		}
 	}
 
 	private spawnFormation() {
@@ -1166,6 +1248,7 @@ export class GameSystem extends createSystem({}) {
 				[EnemyType.Galleon]: 3,
 				[EnemyType.ManOWar]: 4,
 				[EnemyType.GhostShip]: 2.2,
+			[EnemyType.SeaSerpent]: 1.2,
 			};
 
 			this.enemies.push({
@@ -1384,6 +1467,23 @@ export class GameSystem extends createSystem({}) {
 		// Clean up waterspouts
 		for (const ws of this.waterspouts) ws.group.removeFromParent();
 		this.waterspouts = [];
+		// Clean up sea serpents
+		for (const ss of this.seaSerpents) {
+			ss.head.removeFromParent();
+			for (const seg of ss.segments) seg.removeFromParent();
+		}
+		this.seaSerpents = [];
+		// Clean up mortars
+		for (const m of this.mortars) m.mesh.removeFromParent();
+		this.mortars = [];
+		// Clean up chain shots
+		for (const cs of this.chainShots) cs.group.removeFromParent();
+		this.chainShots = [];
+		// Reset cannon type
+		this.cannonType = CANNON_STANDARD;
+		// Clean up ship upgrade visuals
+		for (const v of this.shipUpgradeVisuals) v.removeFromParent();
+		this.shipUpgradeVisuals = [];
 	}
 
 	// ==== SPAWNING ====
@@ -1444,6 +1544,7 @@ export class GameSystem extends createSystem({}) {
 			[EnemyType.Galleon]: 3,
 			[EnemyType.ManOWar]: 4,
 			[EnemyType.GhostShip]: 2.2,
+			[EnemyType.SeaSerpent]: 1.2,
 		};
 
 		this.enemies.push({
@@ -1484,6 +1585,17 @@ export class GameSystem extends createSystem({}) {
 
 	private firePlayerCannon() {
 		if (this.time - this.lastFireTime < this.fireRate) return;
+
+		// Dispatch based on cannon type
+		if (this.cannonType === CANNON_MORTAR) {
+			this.fireMortar();
+			return;
+		}
+		if (this.cannonType === CANNON_CHAIN) {
+			this.fireChainShot();
+			return;
+		}
+
 		this.lastFireTime = this.time;
 		this.sessionCannonsFired++;
 
@@ -1731,6 +1843,8 @@ export class GameSystem extends createSystem({}) {
 				break;
 		}
 
+		this.totalUpgradeLevel = this.cannonLevel + this.hullLevel + this.speedLevel;
+		this.refreshShipVisuals();
 		this.updateShopPanel();
 	}
 
@@ -1875,6 +1989,22 @@ export class GameSystem extends createSystem({}) {
 			});
 		} else {
 			this.hudPanel?.getElementById('hud-crew')?.setProperties({ text: '' });
+		}
+
+		// Cannon type display
+		const cannonNames = ['⚔ Standard', '💣 Mortar', '⛓ Chain Shot'];
+		this.hudPanel?.getElementById('hud-cannon-type')?.setProperties({
+			text: `Cannon: ${cannonNames[this.cannonType]}`
+		});
+
+		// Sea serpent HP
+		if (this.seaSerpents.length > 0) {
+			const serpent = this.seaSerpents.find(s => !s.isSinking);
+			if (serpent) {
+				this.hudPanel?.getElementById('hud-boss')?.setProperties({
+					text: `SERPENT: ${Math.round((serpent.hp / serpent.maxHp) * 100)}%`
+				});
+			}
 		}
 	}
 
@@ -2120,6 +2250,10 @@ export class GameSystem extends createSystem({}) {
 		this.updateFortress(delta);
 		this.updateIcebergs(delta);
 		this.updateWaterspouts(delta);
+		this.updateSeaSerpents(delta);
+		this.updateMortars(delta);
+		this.updateChainShots(delta);
+		this.updateCannonTypeCycle();
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -5267,6 +5401,512 @@ export class GameSystem extends createSystem({}) {
 		if (this.volcanoEvent) {
 			this.volcanoEvent.glowMesh.removeFromParent();
 			this.volcanoEvent = null;
+		}
+	}
+
+	// ==== SEA SERPENT ====
+
+	private spawnSeaSerpent() {
+		const scheme = getScheme(this.colorScheme);
+		const diffMult = [0.7, 1.0, 1.4][this.difficulty];
+		const segmentCount = 8;
+		const angle = Math.random() * Math.PI * 2;
+		const dist = 40 + Math.random() * 15;
+
+		const head = createSeaSerpentHead(scheme);
+		const startX = Math.cos(angle) * dist;
+		const startZ = Math.sin(angle) * dist;
+		head.position.set(startX, 0.3, startZ);
+		this.world.scene.add(head);
+
+		const segments: Group[] = [];
+		const segmentPositions: { x: number; z: number; angle: number }[] = [];
+
+		// Place head position
+		segmentPositions.push({ x: startX, z: startZ, angle: angle + Math.PI });
+
+		for (let i = 0; i < segmentCount; i++) {
+			const seg = createSeaSerpentSegment(scheme, i);
+			const segX = startX + Math.cos(angle) * (i + 1) * 1.2;
+			const segZ = startZ + Math.sin(angle) * (i + 1) * 1.2;
+			seg.position.set(segX, 0.2, segZ);
+			this.world.scene.add(seg);
+			segments.push(seg);
+			segmentPositions.push({ x: segX, z: segZ, angle: angle + Math.PI });
+		}
+
+		const baseHp = (80 + this.wave * 10) * diffMult;
+
+		this.seaSerpents.push({
+			head,
+			segments,
+			hp: baseHp,
+			maxHp: baseHp,
+			speed: 4 + this.wave * 0.15,
+			damage: 15 * diffMult,
+			angle: angle + Math.PI, // Face toward center
+			turnRate: 1.5,
+			biteTimer: 0,
+			segmentPositions,
+			isSinking: false,
+			sinkTimer: 0,
+			scoreValue: 600 + this.wave * 20,
+			undulatePhase: Math.random() * Math.PI * 2,
+		});
+
+		this.enemiesRemaining++;
+		playSerpentHiss(this.volume);
+		this.showWaveAnnouncement('🐍 SEA SERPENT!');
+		this.addLogEntry('🐍 Sea Serpent spotted in deep water!');
+	}
+
+	private updateSeaSerpents(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+
+		for (let si = this.seaSerpents.length - 1; si >= 0; si--) {
+			const ss = this.seaSerpents[si];
+
+			if (ss.isSinking) {
+				ss.sinkTimer += delta;
+				// Sink all parts
+				ss.head.position.y -= delta * 2;
+				ss.head.rotation.z += delta * 3;
+				for (const seg of ss.segments) {
+					seg.position.y -= delta * 1.5;
+					seg.rotation.z += delta * 2;
+				}
+				// Fade out
+				const sinkProgress = ss.sinkTimer / 3;
+				for (const child of ss.head.children) {
+					const mat = (child as Mesh).material as MeshStandardMaterial;
+					if (mat?.opacity !== undefined) mat.opacity = Math.max(0, 1 - sinkProgress);
+				}
+
+				if (ss.sinkTimer > 3) {
+					ss.head.removeFromParent();
+					for (const seg of ss.segments) seg.removeFromParent();
+					// Drop treasure
+					this.spawnTreasure(ss.segmentPositions[0].x, ss.segmentPositions[0].z, ss.scoreValue, RARITY_RARE);
+					this.seaSerpents.splice(si, 1);
+				}
+				continue;
+			}
+
+			// Head chases player with sinusoidal weaving
+			const dx = playerPos.x - ss.head.position.x;
+			const dz = playerPos.z - ss.head.position.z;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			const targetAngle = Math.atan2(dz, dx);
+
+			// Smooth turning with undulation
+			ss.undulatePhase += delta * 2;
+			let angleDiff = targetAngle - ss.angle;
+			while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+			while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+			ss.angle += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), ss.turnRate * delta);
+			// Add sinusoidal weave to heading
+			const weaveAngle = ss.angle + Math.sin(ss.undulatePhase) * 0.4;
+
+			// Move head
+			const moveSpeed = ss.speed * delta;
+			ss.head.position.x += Math.cos(weaveAngle) * moveSpeed;
+			ss.head.position.z += Math.sin(weaveAngle) * moveSpeed;
+			ss.head.position.y = 0.3 + Math.sin(this.time * 2 + ss.undulatePhase) * 0.2;
+			ss.head.rotation.y = -weaveAngle + Math.PI / 2;
+
+			// Update head's tracked position
+			ss.segmentPositions[0].x = ss.head.position.x;
+			ss.segmentPositions[0].z = ss.head.position.z;
+			ss.segmentPositions[0].angle = weaveAngle;
+
+			// Each segment follows the one ahead of it
+			for (let i = 0; i < ss.segments.length; i++) {
+				const prev = ss.segmentPositions[i];
+				const curr = ss.segmentPositions[i + 1];
+				const fdx = prev.x - curr.x;
+				const fdz = prev.z - curr.z;
+				const fdist = Math.sqrt(fdx * fdx + fdz * fdz);
+				const segSpacing = 1.2;
+
+				if (fdist > segSpacing) {
+					const followAngle = Math.atan2(fdz, fdx);
+					curr.x = prev.x - Math.cos(followAngle) * segSpacing;
+					curr.z = prev.z - Math.sin(followAngle) * segSpacing;
+					curr.angle = followAngle;
+				}
+
+				ss.segments[i].position.x = curr.x;
+				ss.segments[i].position.z = curr.z;
+				ss.segments[i].position.y = 0.2 + Math.sin(this.time * 2 + ss.undulatePhase + (i + 1) * 0.5) * 0.15;
+				ss.segments[i].rotation.y = -curr.angle + Math.PI / 2;
+			}
+
+			// Bite attack when close
+			ss.biteTimer -= delta;
+			if (dist < 4 && ss.biteTimer <= 0) {
+				this.playerHp -= ss.damage;
+				this.damageFlashTimer = 0.3;
+				this.shakeIntensity = Math.max(this.shakeIntensity, 0.8);
+				playSerpentBite(this.volume);
+				ss.biteTimer = 2; // 2 second cooldown
+				if (this.playerHp <= 0) {
+					this.playerHp = 0;
+					this.endGame();
+				}
+			}
+
+			// Check cannonball hits against head and segments
+			for (let ci = this.cannonballs.length - 1; ci >= 0; ci--) {
+				const cb = this.cannonballs[ci];
+				if (cb.isEnemy) continue;
+
+				// Hit head?
+				const hdx = cb.mesh.position.x - ss.head.position.x;
+				const hdz = cb.mesh.position.z - ss.head.position.z;
+				if (Math.sqrt(hdx * hdx + hdz * hdz) < 1.5) {
+					ss.hp -= cb.damage * 1.5; // Head takes bonus damage
+					this.spawnExplosion(cb.mesh.position.x, 1, cb.mesh.position.z, 0.5);
+					playHit(this.volume);
+					cb.mesh.removeFromParent();
+					for (const t of cb.trail) t.removeFromParent();
+					this.cannonballs.splice(ci, 1);
+
+					if (ss.hp <= 0 && !ss.isSinking) {
+						this.killSerpent(ss);
+					}
+					continue;
+				}
+
+				// Hit segments?
+				let segHit = false;
+				for (const seg of ss.segments) {
+					const sdx = cb.mesh.position.x - seg.position.x;
+					const sdz = cb.mesh.position.z - seg.position.z;
+					if (Math.sqrt(sdx * sdx + sdz * sdz) < 1.0) {
+						ss.hp -= cb.damage;
+						this.spawnExplosion(cb.mesh.position.x, 0.5, cb.mesh.position.z, 0.4);
+						playHit(this.volume * 0.8);
+						cb.mesh.removeFromParent();
+						for (const t of cb.trail) t.removeFromParent();
+						this.cannonballs.splice(ci, 1);
+						segHit = true;
+
+						if (ss.hp <= 0 && !ss.isSinking) {
+							this.killSerpent(ss);
+						}
+						break;
+					}
+				}
+				if (segHit) continue;
+			}
+		}
+	}
+
+	private killSerpent(ss: SeaSerpentData) {
+		ss.isSinking = true;
+		ss.sinkTimer = 0;
+		this.score += ss.scoreValue;
+		this.combo++;
+		this.comboTimer = 3;
+		if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+		this.enemiesRemaining--;
+		playSerpentDeath(this.volume);
+		this.spawnScorePopup(ss.head.position.x, 3, ss.head.position.z, ss.scoreValue);
+		this.addLogEntry(`🐍 Sea Serpent defeated! +${ss.scoreValue} pts`);
+	}
+
+	// ==== MORTAR CANNON ====
+
+	private fireMortar() {
+		const mortarRate = this.fireRate * 2.0; // Slower than standard
+		if (this.time - this.lastFireTime < mortarRate) return;
+		this.lastFireTime = this.time;
+		this.sessionCannonsFired++;
+
+		const scheme = getScheme(this.colorScheme);
+		playMortarLaunch(this.volume);
+
+		const dmgMult = this.hasPowerUp(PU_DAMAGE) ? 2 : 1;
+		const aimRadH = this.aimAngleH;
+		const startX = (this.playerShipGroup?.position.x || 0) + Math.sin(aimRadH) * 2;
+		const startZ = (this.playerShipGroup?.position.z || 0) - Math.cos(aimRadH) * 2;
+		// Target 15-20 units ahead
+		const range = 18;
+		const targetX = startX + Math.sin(aimRadH) * range;
+		const targetZ = startZ - Math.cos(aimRadH) * range;
+
+		const mesh = createMortarShell(scheme);
+		mesh.position.set(startX, 2, startZ);
+		this.world.scene.add(mesh);
+
+		this.spawnMuzzleFlash(startX, 2.5, startZ);
+
+		this.mortars.push({
+			mesh,
+			startX, startZ,
+			targetX, targetZ,
+			flightTime: 1.2,
+			elapsed: 0,
+			damage: this.cannonDamage * 1.5 * dmgMult,
+			splashRadius: 6,
+		});
+
+		this.shakeIntensity = Math.max(this.shakeIntensity, 0.5);
+	}
+
+	private updateMortars(delta: number) {
+		for (let i = this.mortars.length - 1; i >= 0; i--) {
+			const m = this.mortars[i];
+			m.elapsed += delta;
+			const t = m.elapsed / m.flightTime;
+
+			if (t >= 1) {
+				// Impact!
+				playMortarImpact(this.volume);
+				this.spawnExplosion(m.targetX, 0.5, m.targetZ, 2.0);
+				this.spawnSplash(m.targetX, m.targetZ);
+				this.shakeIntensity = Math.max(this.shakeIntensity, 0.7);
+
+				// Splash damage to enemies
+				for (const enemy of this.enemies) {
+					if (enemy.isSinking) continue;
+					const edx = enemy.group.position.x - m.targetX;
+					const edz = enemy.group.position.z - m.targetZ;
+					const edist = Math.sqrt(edx * edx + edz * edz);
+					if (edist < m.splashRadius) {
+						const falloff = 1 - edist / m.splashRadius;
+						const dmg = m.damage * falloff;
+						enemy.hp -= dmg;
+						if (enemy.hp <= 0 && !enemy.isSinking) {
+							this.sinkEnemy(enemy);
+						}
+					}
+				}
+
+				// Splash damage to serpent segments
+				for (const ss of this.seaSerpents) {
+					if (ss.isSinking) continue;
+					const sdx = ss.head.position.x - m.targetX;
+					const sdz = ss.head.position.z - m.targetZ;
+					if (Math.sqrt(sdx * sdx + sdz * sdz) < m.splashRadius) {
+						ss.hp -= m.damage * 0.8;
+						if (ss.hp <= 0) this.killSerpent(ss);
+					}
+				}
+
+				m.mesh.removeFromParent();
+				this.mortars.splice(i, 1);
+				continue;
+			}
+
+			// Arcing trajectory: lerp X/Z, parabolic Y
+			m.mesh.position.x = m.startX + (m.targetX - m.startX) * t;
+			m.mesh.position.z = m.startZ + (m.targetZ - m.startZ) * t;
+			m.mesh.position.y = 2 + Math.sin(t * Math.PI) * 12; // High arc
+			m.mesh.rotation.x += delta * 8;
+			m.mesh.rotation.z += delta * 5;
+
+			// Glow pulse
+			const mat = m.mesh.material as MeshStandardMaterial;
+			mat.emissiveIntensity = 1.5 + Math.sin(this.time * 10) * 0.5;
+		}
+	}
+
+	// ==== CHAIN SHOT ====
+
+	private fireChainShot() {
+		const chainRate = this.fireRate * 1.3; // Slightly slower
+		if (this.time - this.lastFireTime < chainRate) return;
+		this.lastFireTime = this.time;
+		this.sessionCannonsFired++;
+
+		const scheme = getScheme(this.colorScheme);
+		playChainShotFire(this.volume);
+
+		const aimRadH = this.aimAngleH;
+		const speed = 20;
+		const startX = (this.playerShipGroup?.position.x || 0) + Math.sin(aimRadH) * 2;
+		const startZ = (this.playerShipGroup?.position.z || 0) - Math.cos(aimRadH) * 2;
+		const vx = Math.sin(aimRadH) * speed;
+		const vz = -Math.cos(aimRadH) * speed;
+
+		const group = createChainShot(scheme);
+		group.position.set(startX, 2, startZ);
+		this.world.scene.add(group);
+
+		this.spawnMuzzleFlash(startX, 2.2, startZ);
+
+		const dmgMult = this.hasPowerUp(PU_DAMAGE) ? 2 : 1;
+		this.chainShots.push({
+			group, vx, vz,
+			lifetime: 0,
+			maxLifetime: 3,
+			damage: this.cannonDamage * 0.6 * dmgMult, // Lower damage
+			slowDuration: 4, // 4 seconds slow
+		});
+
+		this.shakeIntensity = Math.max(this.shakeIntensity, 0.2);
+	}
+
+	private updateChainShots(delta: number) {
+		for (let i = this.chainShots.length - 1; i >= 0; i--) {
+			const cs = this.chainShots[i];
+			cs.lifetime += delta;
+
+			cs.group.position.x += cs.vx * delta;
+			cs.group.position.z += cs.vz * delta;
+			cs.group.position.y = 2 + Math.sin(cs.lifetime * 3) * 0.3;
+			cs.group.rotation.y += delta * 12; // Spin rapidly
+
+			if (cs.lifetime >= cs.maxLifetime) {
+				cs.group.removeFromParent();
+				this.chainShots.splice(i, 1);
+				continue;
+			}
+
+			// Hit detection against enemies
+			let hit = false;
+			for (const enemy of this.enemies) {
+				if (enemy.isSinking) continue;
+				const edx = enemy.group.position.x - cs.group.position.x;
+				const edz = enemy.group.position.z - cs.group.position.z;
+				const edist = Math.sqrt(edx * edx + edz * edz);
+				if (edist < enemy.hullWidth + 0.5) {
+					enemy.hp -= cs.damage;
+					// SLOW the enemy
+					enemy.speed *= 0.5;
+					// Schedule speed restore
+					const originalSpeed = enemy.speed * 2; // undo the halving
+					setTimeout(() => {
+						if (!enemy.isSinking) {
+							enemy.speed = originalSpeed;
+						}
+					}, cs.slowDuration * 1000);
+
+					playChainShotHit(this.volume);
+					this.spawnExplosion(cs.group.position.x, 1, cs.group.position.z, 0.4);
+					this.addLogEntry(`⛓ Chain shot hit! Enemy slowed ${cs.slowDuration}s`);
+
+					if (enemy.hp <= 0) this.sinkEnemy(enemy);
+
+					cs.group.removeFromParent();
+					this.chainShots.splice(i, 1);
+					hit = true;
+					break;
+				}
+			}
+			if (hit) continue;
+		}
+	}
+
+	// ==== CANNON TYPE CYCLING ====
+
+	private updateCannonTypeCycle() {
+		// Q key to cycle cannon type
+		const cycleKey = this.keys.has('q') || this.keys.has('Q');
+
+		// XR controller: left thumbstick click to cycle
+		const leftGamepad = this.world.input.xr.gamepads.left;
+		const leftThumbClick = leftGamepad?.getButtonDown(InputComponent.Thumbstick) ?? false;
+
+		if ((cycleKey || leftThumbClick) && !this.prevCannonCycleKey) {
+			this.cannonType = (this.cannonType + 1) % CANNON_TYPE_COUNT;
+			playCannonSwitch(this.volume);
+			const cannonNames = ['Standard', 'Mortar', 'Chain Shot'];
+			this.addLogEntry(`⚔ Switched to ${cannonNames[this.cannonType]} cannon`);
+		}
+		this.prevCannonCycleKey = cycleKey || leftThumbClick;
+	}
+
+	// ==== SHIP VISUAL UPGRADES ====
+
+	private refreshShipVisuals() {
+		if (!this.playerShipGroup) return;
+		const scheme = getScheme(this.colorScheme);
+
+		// Remove old upgrade visuals
+		for (const v of this.shipUpgradeVisuals) v.removeFromParent();
+		this.shipUpgradeVisuals = [];
+
+		const totalLv = this.totalUpgradeLevel;
+
+		// Scale up slightly with upgrades (max 1.3x at level 15+)
+		const scaleFactor = 1 + Math.min(totalLv * 0.02, 0.3);
+		this.playerShipGroup.scale.setScalar(scaleFactor);
+
+		// Tier 1 (level 5+): Gold trim on hull
+		if (totalLv >= 5) {
+			const trim = new Mesh(
+				new BoxGeometry(3.2 * scaleFactor, 0.15, 0.15),
+				new MeshStandardMaterial({
+					color: '#ffcc00', emissive: '#ffaa00',
+					emissiveIntensity: 1.0, metalness: 0.9, roughness: 0.1,
+				}),
+			);
+			trim.position.set(0, 0.8, 0);
+			this.playerShipGroup.add(trim);
+			this.shipUpgradeVisuals.push(trim);
+		}
+
+		// Tier 2 (level 8+): Bow ornament
+		if (totalLv >= 8) {
+			const ornament = new Mesh(
+				new ConeGeometry(0.2, 0.6, 6),
+				new MeshStandardMaterial({
+					color: scheme.primary, emissive: scheme.primary,
+					emissiveIntensity: 2.0,
+				}),
+			);
+			ornament.position.set(0, 1.2, -2.2);
+			ornament.rotation.x = -Math.PI / 4;
+			this.playerShipGroup.add(ornament);
+			this.shipUpgradeVisuals.push(ornament);
+		}
+
+		// Tier 3 (level 12+): Port & starboard lanterns
+		if (totalLv >= 12) {
+			for (const side of [-1, 1]) {
+				const lantern = new Mesh(
+					new SphereGeometry(0.15, 6, 6),
+					new MeshStandardMaterial({
+						color: side === -1 ? '#ff3300' : '#00ff33',
+						emissive: side === -1 ? '#ff3300' : '#00ff33',
+						emissiveIntensity: 3.0,
+					}),
+				);
+				lantern.position.set(side * 1.8, 1.0, 0);
+				this.playerShipGroup.add(lantern);
+				this.shipUpgradeVisuals.push(lantern);
+			}
+		}
+
+		// Tier 4 (level 16+): Crown atop main mast
+		if (totalLv >= 16) {
+			const crown = new Mesh(
+				new CylinderGeometry(0.3, 0.15, 0.4, 6),
+				new MeshStandardMaterial({
+					color: '#ffdd00', emissive: '#ffaa00',
+					emissiveIntensity: 2.5, metalness: 1.0, roughness: 0,
+				}),
+			);
+			crown.position.set(0, 6.5, 0);
+			this.playerShipGroup.add(crown);
+			this.shipUpgradeVisuals.push(crown);
+
+			// Crown spikes
+			for (let s = 0; s < 5; s++) {
+				const spike = new Mesh(
+					new ConeGeometry(0.05, 0.3, 4),
+					new MeshStandardMaterial({
+						color: '#ffdd00', emissive: '#ffbb00', emissiveIntensity: 2,
+					}),
+				);
+				const a = (s / 5) * Math.PI * 2;
+				spike.position.set(Math.cos(a) * 0.2, 6.8, Math.sin(a) * 0.2);
+				this.playerShipGroup.add(spike);
+				this.shipUpgradeVisuals.push(spike);
+			}
 		}
 	}
 }

@@ -158,6 +158,7 @@ export enum EnemyType {
 	Galleon = 2,     // Slow, tough
 	ManOWar = 3,     // Boss
 	GhostShip = 4,   // Spectral, phases in/out
+	SeaSerpent = 5,  // Multi-segment serpent
 }
 
 export function createEnemyShip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]): Group {
@@ -539,6 +540,7 @@ export function createRadarBlip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]
 		[EnemyType.Galleon]: '#ff4444',
 		[EnemyType.ManOWar]: '#ff00ff',
 		[EnemyType.GhostShip]: '#66ffff',
+		[EnemyType.SeaSerpent]: '#33ff99',
 	};
 	const sizes: Record<EnemyType, number> = {
 		[EnemyType.Sloop]: 0.04,
@@ -546,6 +548,7 @@ export function createRadarBlip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]
 		[EnemyType.Galleon]: 0.06,
 		[EnemyType.ManOWar]: 0.08,
 		[EnemyType.GhostShip]: 0.06,
+		[EnemyType.SeaSerpent]: 0.07,
 	};
 	return new Mesh(
 		new SphereGeometry(sizes[type], 4, 3),
@@ -1292,5 +1295,127 @@ export function createWaterspout(): Group {
 	);
 	splash.position.y = 0.3;
 	g.add(splash);
+	return g;
+}
+
+// ── Sea Serpent ────────────────────────────────────────────
+export function createSeaSerpentHead(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Elongated head
+	const head = new Mesh(
+		new CylinderGeometry(0.6, 0.3, 2.2, 8),
+		new MeshStandardMaterial({
+			color: '#226644', emissive: scheme.primary,
+			emissiveIntensity: 0.6, metalness: 0.4, roughness: 0.5,
+		}),
+	);
+	head.rotation.x = Math.PI / 2;
+	g.add(head);
+
+	// Jaw
+	const jaw = new Mesh(
+		new ConeGeometry(0.5, 1.0, 6),
+		new MeshStandardMaterial({
+			color: '#113322', emissive: '#ff3300', emissiveIntensity: 0.3,
+		}),
+	);
+	jaw.rotation.x = Math.PI / 2;
+	jaw.position.z = -1.2;
+	g.add(jaw);
+
+	// Eyes (glowing)
+	for (const side of [-1, 1]) {
+		const eye = new Mesh(
+			new SphereGeometry(0.12, 6, 6),
+			new MeshStandardMaterial({
+				color: '#ffcc00', emissive: '#ffaa00', emissiveIntensity: 3,
+			}),
+		);
+		eye.position.set(side * 0.35, 0.2, -0.6);
+		g.add(eye);
+	}
+
+	// Crest fin on top
+	const crest = new Mesh(
+		new PlaneGeometry(0.4, 1.2),
+		new MeshStandardMaterial({
+			color: '#33aa55', emissive: scheme.accent,
+			emissiveIntensity: 0.5, side: DoubleSide,
+			transparent: true, opacity: 0.8,
+		}),
+	);
+	crest.position.set(0, 0.55, 0);
+	g.add(crest);
+
+	return g;
+}
+
+export function createSeaSerpentSegment(scheme: typeof COLOR_SCHEMES[0], index: number): Group {
+	const g = new Group();
+	const radius = 0.5 - index * 0.03; // Taper toward tail
+	const segment = new Mesh(
+		new SphereGeometry(Math.max(radius, 0.15), 8, 6),
+		new MeshStandardMaterial({
+			color: '#226644', emissive: scheme.primary,
+			emissiveIntensity: 0.3 + index * 0.05,
+			metalness: 0.3, roughness: 0.6,
+		}),
+	);
+	g.add(segment);
+
+	// Spine ridges every other segment
+	if (index % 2 === 0) {
+		const spine = new Mesh(
+			new ConeGeometry(0.08, 0.3, 4),
+			new MeshStandardMaterial({
+				color: '#44bb66', emissive: scheme.accent,
+				emissiveIntensity: 0.4,
+			}),
+		);
+		spine.position.y = radius;
+		g.add(spine);
+	}
+
+	return g;
+}
+
+// ── Mortar Shell ───────────────────────────────────────────
+export function createMortarShell(scheme: typeof COLOR_SCHEMES[0]): Mesh {
+	const mesh = new Mesh(
+		new SphereGeometry(0.25, 8, 6),
+		new MeshStandardMaterial({
+			color: '#884400', emissive: '#ff6600',
+			emissiveIntensity: 1.5, metalness: 0.6, roughness: 0.3,
+		}),
+	);
+	return mesh;
+}
+
+// ── Chain Shot ─────────────────────────────────────────────
+export function createChainShot(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Two balls connected by a chain (cylinder)
+	const ballMat = new MeshStandardMaterial({
+		color: '#555555', emissive: '#aaccff',
+		emissiveIntensity: 0.8, metalness: 0.8, roughness: 0.2,
+	});
+	const ball1 = new Mesh(new SphereGeometry(0.12, 6, 6), ballMat);
+	ball1.position.x = -0.25;
+	g.add(ball1);
+
+	const ball2 = new Mesh(new SphereGeometry(0.12, 6, 6), ballMat);
+	ball2.position.x = 0.25;
+	g.add(ball2);
+
+	// Chain link
+	const chain = new Mesh(
+		new CylinderGeometry(0.02, 0.02, 0.5, 4),
+		new MeshStandardMaterial({
+			color: '#888888', emissive: '#aabbcc', emissiveIntensity: 0.4,
+		}),
+	);
+	chain.rotation.z = Math.PI / 2;
+	g.add(chain);
+
 	return g;
 }

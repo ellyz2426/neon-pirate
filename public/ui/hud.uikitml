@@ -73,6 +73,7 @@
   </div>
   <div class="label" id="hud-ability"></div>
   <div class="crew" id="hud-crew"></div>
+  <div class="label" id="hud-cannon-type">Cannon: ⚔ Standard</div>
   <div class="boarding" id="hud-boarding"></div>
   <div class="weather" id="hud-weather"></div>
 </Panel>

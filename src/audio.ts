@@ -862,3 +862,90 @@ export function playShipLogEntry(vol: number = 0.7) {
 		playTone(800, 0.05, 'sine', vol * 0.08);
 	} catch { /* empty */ }
 }
+
+// ── Sea Serpent Sounds ─────────────────────────────────────
+
+export function playSerpentHiss(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		playNoise(0.4, vol * 0.12);
+		playTone(180, 0.3, 'sawtooth', vol * 0.08);
+		setTimeout(() => playTone(150, 0.25, 'sawtooth', vol * 0.06), 100);
+	} catch { /* empty */ }
+}
+
+export function playSerpentDeath(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		playTone(250, 0.5, 'sawtooth', vol * 0.15);
+		setTimeout(() => playTone(180, 0.4, 'sawtooth', vol * 0.12), 100);
+		setTimeout(() => playTone(100, 0.6, 'sawtooth', vol * 0.1), 250);
+		playNoise(0.6, vol * 0.15);
+	} catch { /* empty */ }
+}
+
+export function playSerpentBite(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		playTone(400, 0.08, 'square', vol * 0.12);
+		playTone(300, 0.1, 'square', vol * 0.1);
+	} catch { /* empty */ }
+}
+
+// ── Cannon Type Sounds ─────────────────────────────────────
+
+export function playMortarLaunch(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Deep thud
+		playTone(80, 0.3, 'sine', vol * 0.2);
+		playTone(60, 0.4, 'sine', vol * 0.15);
+		playNoise(0.15, vol * 0.12);
+	} catch { /* empty */ }
+}
+
+export function playMortarImpact(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Big splash explosion
+		playTone(100, 0.3, 'sine', vol * 0.18);
+		playNoise(0.35, vol * 0.2);
+		setTimeout(() => playNoise(0.2, vol * 0.1), 100);
+	} catch { /* empty */ }
+}
+
+export function playChainShotFire(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Whirring chain
+		playTone(600, 0.08, 'square', vol * 0.08);
+		playTone(500, 0.1, 'square', vol * 0.06);
+		setTimeout(() => playTone(550, 0.15, 'sawtooth', vol * 0.06), 40);
+		playNoise(0.1, vol * 0.1);
+	} catch { /* empty */ }
+}
+
+export function playChainShotHit(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		// Metal clanking impact
+		playTone(800, 0.06, 'square', vol * 0.1);
+		playTone(600, 0.08, 'square', vol * 0.08);
+	} catch { /* empty */ }
+}
+
+export function playCannonSwitch(vol: number = 0.7) {
+	try {
+		if (!audioCtx) return;
+		ensureAudio();
+		playTone(900, 0.04, 'sine', vol * 0.06);
+		setTimeout(() => playTone(1100, 0.04, 'sine', vol * 0.06), 60);
+	} catch { /* empty */ }
+}
