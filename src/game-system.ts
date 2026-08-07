@@ -286,6 +286,7 @@ export class GameSystem extends createSystem({}) {
 	private combo = 0;
 	private comboTimer = 0;
 	private maxCombo = 0;
+	private gameStartTime = 0;
 
 	// Keyboard
 	private keys: Set<string> = new Set();
@@ -622,6 +623,7 @@ export class GameSystem extends createSystem({}) {
 		this.fireRate = 1.0;
 		this.playerSpeed = 3;
 		this.cannonLevel = 1;
+		this.gameStartTime = this.time;
 		this.hullLevel = 1;
 		this.speedLevel = 1;
 		this.sessionKills = 0;
@@ -685,8 +687,111 @@ export class GameSystem extends createSystem({}) {
 			this.spawnBarrel();
 		}
 
+		// Formation spawn on wave 4+
+		if (this.wave >= 4 && !isBoss && Math.random() < 0.4) {
+			this.spawnFormation();
+		}
+
+		// Wave announcement
+		if (isBoss) {
+			this.showWaveAnnouncement(`⚓ WAVE ${this.wave} — BOSS INCOMING ⚓`);
+		} else if (this.wave % 10 === 0) {
+			this.showWaveAnnouncement(`WAVE ${this.wave} — THE ARMADA GROWS`);
+		} else {
+			this.showWaveAnnouncement(`WAVE ${this.wave}`);
+		}
+
 		const bpm = 100 + Math.min(this.wave * 5, 60);
 		setBPM(bpm, this.volume);
+	}
+
+	private spawnFormation() {
+		// Spawn 3-5 ships in a V or line formation
+		const count = 3 + Math.floor(Math.random() * 3);
+		const angle = Math.random() * Math.PI * 2;
+		const dist = 40;
+		const centerX = Math.cos(angle) * dist;
+		const centerZ = Math.sin(angle) * dist;
+		const perpX = -Math.sin(angle);
+		const perpZ = Math.cos(angle);
+		const isV = Math.random() < 0.5;
+
+		for (let i = 0; i < count; i++) {
+			const offset = (i - (count - 1) / 2) * 5;
+			const fwdOffset = isV ? Math.abs(offset) * 0.5 : 0;
+			const sx = centerX + perpX * offset + Math.cos(angle) * fwdOffset;
+			const sz = centerZ + perpZ * offset + Math.sin(angle) * fwdOffset;
+
+			const scheme = getScheme(this.colorScheme);
+			const diffMult = [0.7, 1.0, 1.4][this.difficulty];
+			const type = this.wave < 5 ? EnemyType.Sloop : EnemyType.Brigantine;
+			const group = createEnemyShip(type, scheme);
+			group.position.set(sx, 0, sz);
+			group.lookAt(0, 0, 0);
+			this.world.scene.add(group);
+
+			const hpMult = type === EnemyType.Brigantine ? 1.3 : 1;
+			const baseHp = (30 + this.wave * 5) * hpMult * diffMult;
+			const hullWidths: Record<EnemyType, number> = {
+				[EnemyType.Sloop]: 1.8,
+				[EnemyType.Brigantine]: 2.5,
+				[EnemyType.Galleon]: 3,
+				[EnemyType.ManOWar]: 4,
+			};
+
+			this.enemies.push({
+				group,
+				hp: baseHp,
+				maxHp: baseHp,
+				speed: type === EnemyType.Sloop ? 3 + this.wave * 0.1 : 2.5,
+				damage: 10 * diffMult,
+				fireRate: type === EnemyType.Sloop ? 2.5 : 2.0,
+				lastFireTime: this.time + Math.random() * 2,
+				shipType: type,
+				engageRange: 20 + Math.random() * 10,
+				scoreValue: type === EnemyType.Brigantine ? 200 : 100,
+				isSinking: false,
+				sinkTimer: 0,
+				hullWidth: hullWidths[type],
+				circleDir: Math.random() < 0.5 ? 1 : -1,
+				dashCooldown: 0,
+			});
+
+			// These don't count toward spawn quota — they're bonus enemies
+			this.enemiesRemaining++;
+			this.enemiesTotal++;
+		}
+	}
+
+	// Wave announcement visual
+	private waveAnnounceMesh: Mesh | null = null;
+	private waveAnnounceTimer = 0;
+
+	private showWaveAnnouncement(text: string) {
+		// Create a floating announcement sphere that pulses
+		if (this.waveAnnounceMesh) this.waveAnnounceMesh.removeFromParent();
+		const scheme = getScheme(this.colorScheme);
+		this.waveAnnounceMesh = new Mesh(
+			new SphereGeometry(0.5, 8, 6),
+			new MeshStandardMaterial({
+				color: scheme.primary,
+				emissive: scheme.primary,
+				emissiveIntensity: 3,
+				transparent: true,
+				opacity: 1,
+			}),
+		);
+		if (this.playerShipGroup) {
+			this.waveAnnounceMesh.position.set(
+				this.playerShipGroup.position.x,
+				6,
+				this.playerShipGroup.position.z - 3,
+			);
+		} else {
+			this.waveAnnounceMesh.position.set(0, 6, -3);
+		}
+		this.scene.add(this.waveAnnounceMesh);
+		this.waveAnnounceTimer = 2.5;
 	}
 
 	private startNextWave() {
@@ -734,6 +839,15 @@ export class GameSystem extends createSystem({}) {
 		this.resultsPanel?.getElementById('result-wave')?.setProperties({ text: `Wave: ${this.wave}` });
 		this.resultsPanel?.getElementById('result-kills')?.setProperties({ text: `Kills: ${this.sessionKills}` });
 		this.resultsPanel?.getElementById('result-gold')?.setProperties({ text: `Gold: ${this.sessionTreasure}` });
+		this.resultsPanel?.getElementById('result-combo')?.setProperties({ text: `Best Combo: ${this.maxCombo}x` });
+		this.resultsPanel?.getElementById('result-cannons')?.setProperties({ text: `Cannons Fired: ${this.sessionCannonsFired}` });
+		const accuracy = this.sessionCannonsFired > 0
+			? Math.round((this.sessionKills / this.sessionCannonsFired) * 100) : 0;
+		this.resultsPanel?.getElementById('result-accuracy')?.setProperties({ text: `Accuracy: ${accuracy}%` });
+		const elapsed = Math.floor(this.time - (this.gameStartTime || 0));
+		const mins = Math.floor(elapsed / 60);
+		const secs = elapsed % 60;
+		this.resultsPanel?.getElementById('result-time')?.setProperties({ text: `Time: ${mins}:${secs.toString().padStart(2, '0')}` });
 
 		const isNewHigh = highScores[0]?.score === this.score;
 		this.resultsPanel?.getElementById('result-highscore')?.setProperties({
@@ -780,6 +894,7 @@ export class GameSystem extends createSystem({}) {
 		for (const s of this.splashes) s.group.removeFromParent();
 		this.splashes = [];
 		if (this.lightningFlash) { this.lightningFlash.removeFromParent(); this.lightningFlash = null; }
+		if (this.waveAnnounceMesh) { this.waveAnnounceMesh.removeFromParent(); this.waveAnnounceMesh = null; }
 	}
 
 	// ==== SPAWNING ====
@@ -1274,6 +1389,7 @@ export class GameSystem extends createSystem({}) {
 		this.updateBarrels(delta);
 		this.updateSplashes(delta);
 		this.updateLightning(delta);
+		this.updateWaveAnnouncement(delta);
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -2223,7 +2339,23 @@ export class GameSystem extends createSystem({}) {
 	}
 
 	// ── Lightning Effect (Boss Waves) ──────────────────────────
+	private updateWaveAnnouncement(delta: number) {
+		if (this.waveAnnounceMesh && this.waveAnnounceTimer > 0) {
+			this.waveAnnounceTimer -= delta;
+			const t = this.waveAnnounceTimer / 2.5;
+			this.waveAnnounceMesh.position.y = 6 + (1 - t) * 2;
+			const scale = 0.3 + Math.sin(this.time * 8) * 0.1 + t * 0.5;
+			this.waveAnnounceMesh.scale.setScalar(scale);
+			(this.waveAnnounceMesh.material as MeshStandardMaterial).opacity = Math.min(1, t * 2);
+			if (this.waveAnnounceTimer <= 0) {
+				this.waveAnnounceMesh.removeFromParent();
+				this.waveAnnounceMesh = null;
+			}
+		}
+	}
+
 	private updateLightning(delta: number) {
+
 		const isBossWave = this.wave % 5 === 0 && this.enemies.some(e => e.shipType === EnemyType.ManOWar);
 		if (!isBossWave) {
 			if (this.lightningFlash) { this.lightningFlash.removeFromParent(); this.lightningFlash = null; }

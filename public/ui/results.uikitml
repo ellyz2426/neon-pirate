@@ -58,6 +58,10 @@
   <div class="stat" id="result-wave">Wave: 1</div>
   <div class="stat" id="result-kills">Kills: 0</div>
   <div class="stat" id="result-gold">Gold: 0</div>
+  <div class="stat" id="result-combo">Best Combo: 0x</div>
+  <div class="stat" id="result-cannons">Cannons Fired: 0</div>
+  <div class="stat" id="result-accuracy">Accuracy: 0%</div>
+  <div class="stat" id="result-time">Time: 0:00</div>
   <div class="divider"></div>
   <div class="lb-title">LEADERBOARD</div>
   <div class="lb-entry" id="lb-0">#1 ---</div>
