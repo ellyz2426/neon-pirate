@@ -1,0 +1,57 @@
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 10;
+    background-color: rgba(0, 8, 20, 0.94);
+    border-radius: 14;
+    width: 400;
+    border-color: rgba(0, 255, 255, 0.4);
+    border-width: 2;
+  }
+  .title {
+    font-size: 24;
+    color: #00ffff;
+  }
+  .stat {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.8);
+  }
+  .divider {
+    width: 360;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.2);
+  }
+  .btn {
+    padding: 10;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 8;
+    width: 200;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-text {
+    font-size: 14;
+    color: #00ffff;
+  }
+</style>
+<Panel class="root">
+  <div class="title">CAPTAIN'S LOG</div>
+  <div class="divider"></div>
+  <div class="stat" id="stat-games">Games: 0</div>
+  <div class="stat" id="stat-kills">Total Kills: 0</div>
+  <div class="stat" id="stat-gold">Gold Earned: 0</div>
+  <div class="stat" id="stat-waves">Waves: 0</div>
+  <div class="stat" id="stat-highscore">High Score: 0</div>
+  <div class="stat" id="stat-bestwave">Best Wave: 0</div>
+  <div class="stat" id="stat-cannons">Cannons Fired: 0</div>
+  <div class="stat" id="stat-treasure">Treasure: 0</div>
+  <div class="stat" id="stat-bosses">Bosses: 0</div>
+  <div class="divider"></div>
+  <div class="btn" id="btn-stats-back">
+    <div class="btn-text">BACK</div>
+  </div>
+</Panel>

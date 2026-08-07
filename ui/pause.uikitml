@@ -1,0 +1,55 @@
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 12;
+    background-color: rgba(0, 8, 20, 0.94);
+    border-radius: 14;
+    width: 360;
+    border-color: rgba(0, 255, 255, 0.4);
+    border-width: 2;
+  }
+  .title {
+    font-size: 28;
+    color: #00ffff;
+  }
+  .info {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.7);
+  }
+  .btn {
+    padding: 10;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 8;
+    width: 280;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-text {
+    font-size: 16;
+    color: #00ffff;
+  }
+  .divider {
+    width: 320;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.2);
+  }
+</style>
+<Panel class="root">
+  <div class="title">PAUSED</div>
+  <div class="info" id="pause-wave">Wave 1</div>
+  <div class="info" id="pause-score">Score: 0</div>
+  <div class="divider"></div>
+  <div class="btn" id="btn-resume">
+    <div class="btn-text">RESUME</div>
+  </div>
+  <div class="btn" id="btn-pause-settings">
+    <div class="btn-text">SETTINGS</div>
+  </div>
+  <div class="btn" id="btn-quit">
+    <div class="btn-text">ABANDON SHIP</div>
+  </div>
+</Panel>

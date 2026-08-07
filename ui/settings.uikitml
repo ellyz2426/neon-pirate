@@ -1,0 +1,98 @@
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 12;
+    background-color: rgba(0, 8, 20, 0.94);
+    border-radius: 14;
+    width: 400;
+    border-color: rgba(0, 255, 255, 0.4);
+    border-width: 2;
+  }
+  .title {
+    font-size: 24;
+    color: #00ffff;
+  }
+  .section {
+    flex-direction: column;
+    gap: 8;
+    width: 360;
+    align-items: center;
+  }
+  .label {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.6);
+  }
+  .row {
+    flex-direction: row;
+    gap: 8;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn {
+    padding: 8;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 6;
+    width: 80;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-wide {
+    padding: 8;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 6;
+    width: 200;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-text {
+    font-size: 14;
+    color: #00ffff;
+  }
+  .value {
+    font-size: 16;
+    color: #ffaa00;
+  }
+  .divider {
+    width: 360;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.2);
+  }
+</style>
+<Panel class="root">
+  <div class="title">SETTINGS</div>
+  <div class="divider"></div>
+  <div class="section">
+    <div class="label">DIFFICULTY</div>
+    <div class="value" id="diff-label">NORMAL</div>
+    <div class="row">
+      <div class="btn" id="btn-diff-easy"><div class="btn-text">EASY</div></div>
+      <div class="btn" id="btn-diff-normal"><div class="btn-text">NORMAL</div></div>
+      <div class="btn" id="btn-diff-hard"><div class="btn-text">HARD</div></div>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <div class="section">
+    <div class="label">VOLUME</div>
+    <div class="value" id="vol-label">70%</div>
+    <div class="row">
+      <div class="btn" id="btn-vol-down"><div class="btn-text">-</div></div>
+      <div class="btn" id="btn-vol-up"><div class="btn-text">+</div></div>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <div class="section">
+    <div class="label">COLOR SCHEME</div>
+    <div class="value" id="color-label">CYAN</div>
+    <div class="btn-wide" id="btn-color"><div class="btn-text">CHANGE</div></div>
+  </div>
+  <div class="divider"></div>
+  <div class="btn-wide" id="btn-settings-back">
+    <div class="btn-text">BACK</div>
+  </div>
+</Panel>

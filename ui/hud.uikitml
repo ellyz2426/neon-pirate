@@ -1,0 +1,79 @@
+<style>
+  .root {
+    flex-direction: column;
+    padding: 12;
+    gap: 6;
+    background-color: rgba(0, 8, 20, 0.85);
+    border-radius: 10;
+    width: 380;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 356;
+  }
+  .label {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.8);
+  }
+  .weather {
+    font-size: 13;
+    color: #ffdd00;
+  }
+  .value {
+    font-size: 16;
+    color: #00ffff;
+  }
+  .big-value {
+    font-size: 22;
+    color: #ffaa00;
+  }
+  .boss-bar {
+    font-size: 16;
+    color: #ff3344;
+  }
+  .combo {
+    font-size: 18;
+    color: #ff00ff;
+  }
+  .divider {
+    width: 356;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.15);
+  }
+  .boarding {
+    font-size: 20;
+    color: #ffdd00;
+  }
+  .crew {
+    font-size: 13;
+    color: rgba(100, 220, 160, 0.9);
+  }
+</style>
+<Panel class="root">
+  <div class="row">
+    <div class="big-value" id="hud-score">Score: 0</div>
+    <div class="value" id="hud-wave">Wave 1</div>
+  </div>
+  <div class="divider"></div>
+  <div class="row">
+    <div class="value" id="hud-hp">HP: 100%</div>
+    <div class="value" id="hud-gold">Gold: 0</div>
+    <div class="value" id="hud-enemies">Enemies: 0</div>
+  </div>
+  <div class="combo" id="hud-combo"></div>
+  <div class="boss-bar" id="hud-boss"></div>
+  <div class="label" id="hud-powerups"></div>
+  <div class="row">
+    <div class="label" id="hud-dash"></div>
+    <div class="label" id="hud-harpoon"></div>
+  </div>
+  <div class="label" id="hud-ability"></div>
+  <div class="crew" id="hud-crew"></div>
+  <div class="label" id="hud-cannon-type">Cannon: ⚔ Standard</div>
+  <div class="boarding" id="hud-boarding"></div>
+  <div class="weather" id="hud-weather"></div>
+</Panel>

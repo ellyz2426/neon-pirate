@@ -1,0 +1,62 @@
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 30;
+    gap: 16;
+    background-color: rgba(0, 8, 20, 0.94);
+    border-radius: 16;
+    width: 420;
+    border-color: rgba(0, 255, 255, 0.4);
+    border-width: 2;
+  }
+  .title {
+    font-size: 36;
+    color: #00ffff;
+  }
+  .subtitle {
+    font-size: 14;
+    color: rgba(0, 200, 255, 0.7);
+  }
+  .divider {
+    width: 380;
+    height: 1;
+    background-color: rgba(0, 255, 255, 0.2);
+  }
+  .btn {
+    padding: 12;
+    background-color: rgba(0, 150, 200, 0.15);
+    border-radius: 8;
+    width: 320;
+    align-items: center;
+    cursor: pointer;
+    border-color: rgba(0, 255, 255, 0.3);
+    border-width: 1;
+  }
+  .btn-text {
+    font-size: 18;
+    color: #00ffff;
+  }
+  .skull {
+    font-size: 48;
+    color: #00ffff;
+  }
+</style>
+<Panel class="root">
+  <div class="skull" id="skull-icon">☠</div>
+  <div class="title" id="game-title">NEON PIRATE</div>
+  <div class="subtitle">BROADSIDE NAVAL COMBAT</div>
+  <div class="divider"></div>
+  <div class="btn" id="btn-play">
+    <div class="btn-text">SET SAIL</div>
+  </div>
+  <div class="btn" id="btn-settings">
+    <div class="btn-text">SETTINGS</div>
+  </div>
+  <div class="btn" id="btn-stats">
+    <div class="btn-text">CAPTAIN'S LOG</div>
+  </div>
+  <div class="btn" id="btn-tutorial">
+    <div class="btn-text">HOW TO PLAY</div>
+  </div>
+</Panel>

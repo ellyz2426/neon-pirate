@@ -1,0 +1,80 @@
+{
+  "version": "iwsdk.scene.v1",
+  "units": "meters",
+  "components": {
+    "com.iwsdk.components.DomeGradient": {
+      "sky": [0.01, 0.02, 0.06, 1],
+      "equator": [0.01, 0.04, 0.08, 1],
+      "ground": [0.0, 0.01, 0.03, 1],
+      "intensity": 0.5
+    },
+    "com.iwsdk.components.IBLGradient": {
+      "sky": [0.05, 0.08, 0.15, 1],
+      "equator": [0.03, 0.06, 0.12, 1],
+      "ground": [0.01, 0.02, 0.05, 1],
+      "intensity": 0.4
+    }
+  },
+  "resources": {},
+  "nodes": [
+    {
+      "id": "menu-panel",
+      "name": "Menu Panel",
+      "content": { "type": "asset", "asset": "menu-panel" },
+      "transform": { "position": [0, 4, -6], "scale": 0.5 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "hud-panel",
+      "name": "HUD Panel",
+      "content": { "type": "asset", "asset": "hud-panel" },
+      "transform": { "position": [0, 6, -4], "scale": 0.35 },
+      "components": {
+        "RayInteractable": {},
+        "ScreenSpace": { "top": "10px", "left": "10px", "width": "35vw", "height": "15%" }
+      }
+    },
+    {
+      "id": "pause-panel",
+      "name": "Pause Panel",
+      "content": { "type": "asset", "asset": "pause-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "results-panel",
+      "name": "Results Panel",
+      "content": { "type": "asset", "asset": "results-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "settings-panel",
+      "name": "Settings Panel",
+      "content": { "type": "asset", "asset": "settings-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "stats-panel",
+      "name": "Stats Panel",
+      "content": { "type": "asset", "asset": "stats-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "shop-panel",
+      "name": "Shop Panel",
+      "content": { "type": "asset", "asset": "shop-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "tutorial-panel",
+      "name": "Tutorial Panel",
+      "content": { "type": "asset", "asset": "tutorial-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
+    }
+  ]
+}
