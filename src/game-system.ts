@@ -33,6 +33,9 @@ import {
 	createSeaMine,
 	createWaterSplash,
 	createStarfield,
+	createCompass,
+	createIsland,
+	createSeagull,
 	getScheme,
 	COLOR_SCHEMES,
 	EnemyType,
@@ -346,6 +349,12 @@ export class GameSystem extends createSystem({}) {
 	// Water column splash effect
 	private splashes: { group: Group; timer: number }[] = [];
 
+	// Seagulls
+	private seagulls: Group[] = [];
+
+	// Compass
+	private compass: Group | null = null;
+
 	init() {
 		const settings = loadSettings();
 		this.difficulty = settings.difficulty;
@@ -395,6 +404,42 @@ export class GameSystem extends createSystem({}) {
 		// Starfield
 		const stars = createStarfield();
 		this.world.scene.add(stars);
+
+		// Background islands
+		for (let i = 0; i < 4; i++) {
+			const island = createIsland(scheme);
+			const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
+			const r = 80 + Math.random() * 30;
+			island.position.set(Math.cos(angle) * r, -0.5, Math.sin(angle) * r);
+			island.scale.setScalar(0.8 + Math.random() * 0.6);
+			island.rotation.y = Math.random() * Math.PI * 2;
+			this.world.scene.add(island);
+		}
+
+		// Seagulls
+		for (let i = 0; i < 6; i++) {
+			const gull = createSeagull();
+			gull.position.set(
+				(Math.random() - 0.5) * 80,
+				15 + Math.random() * 15,
+				(Math.random() - 0.5) * 80,
+			);
+			gull.userData = {
+				baseX: gull.position.x,
+				baseZ: gull.position.z,
+				circleRadius: 10 + Math.random() * 20,
+				circleSpeed: 0.2 + Math.random() * 0.3,
+				wingPhase: Math.random() * Math.PI * 2,
+			};
+			this.world.scene.add(gull);
+			this.seagulls.push(gull);
+		}
+
+		// Compass indicator (minimap)
+		this.compass = createCompass(scheme);
+		this.compass.position.set(0, 0.5, 0);
+		this.compass.scale.setScalar(1.5);
+		this.world.scene.add(this.compass);
 
 		// Player ship
 		this.spawnPlayerShip();
@@ -1390,6 +1435,8 @@ export class GameSystem extends createSystem({}) {
 		this.updateSplashes(delta);
 		this.updateLightning(delta);
 		this.updateWaveAnnouncement(delta);
+		this.updateSeagulls(delta);
+		this.updateCompass();
 
 		// Spawn random power-ups
 		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
@@ -2188,6 +2235,44 @@ export class GameSystem extends createSystem({}) {
 				this.showPanel('shop');
 			}
 		}, 2000);
+	}
+
+	private updateSeagulls(delta: number) {
+		for (const gull of this.seagulls) {
+			const ud = gull.userData as {
+				baseX: number; baseZ: number;
+				circleRadius: number; circleSpeed: number; wingPhase: number;
+			};
+			ud.wingPhase += delta * 4;
+			// Circle flight
+			const angle = this.time * ud.circleSpeed;
+			gull.position.x = ud.baseX + Math.cos(angle) * ud.circleRadius;
+			gull.position.z = ud.baseZ + Math.sin(angle) * ud.circleRadius;
+			gull.position.y += Math.sin(this.time * 0.5 + ud.wingPhase) * 0.01;
+			// Face direction of travel
+			gull.rotation.y = -angle + Math.PI / 2;
+
+			// Wing flap animation
+			if (gull.children.length >= 3) {
+				gull.children[1].rotation.z = Math.sin(ud.wingPhase) * 0.5;
+				gull.children[2].rotation.z = -Math.sin(ud.wingPhase) * 0.5;
+			}
+		}
+	}
+
+	private updateCompass() {
+		if (!this.compass || !this.playerShipGroup) return;
+		// Position compass above and in front of player
+		this.compass.position.set(
+			this.playerShipGroup.position.x,
+			0.3,
+			this.playerShipGroup.position.z,
+		);
+		// Scale down to minimap size
+		this.compass.scale.setScalar(2);
+		// Show enemy positions on compass (as blips from geometry)
+		// Just spin the compass ring subtly
+		this.compass.rotation.y = this.time * 0.1;
 	}
 
 	private animateOcean(time: number) {

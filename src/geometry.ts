@@ -3,6 +3,7 @@ import {
 	CylinderGeometry,
 	ConeGeometry,
 	SphereGeometry,
+	RingGeometry,
 	Mesh,
 	MeshStandardMaterial,
 	Group,
@@ -400,5 +401,207 @@ export function createStarfield(): Group {
 		);
 		g.add(star);
 	}
+	return g;
+}
+
+// Compass rose indicator
+export function createCompass(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Outer ring
+	const ring = new Mesh(
+		new RingGeometry(0.8, 1.0, 24),
+		new MeshStandardMaterial({
+			color: scheme.accent, emissive: scheme.accent, emissiveIntensity: 0.5,
+			transparent: true, opacity: 0.4, side: DoubleSide,
+		}),
+	);
+	ring.rotation.x = -Math.PI / 2;
+	g.add(ring);
+
+	// Inner ring
+	const innerRing = new Mesh(
+		new RingGeometry(0.3, 0.35, 16),
+		new MeshStandardMaterial({
+			color: scheme.primary, emissive: scheme.primary, emissiveIntensity: 0.8,
+			transparent: true, opacity: 0.6, side: DoubleSide,
+		}),
+	);
+	innerRing.rotation.x = -Math.PI / 2;
+	g.add(innerRing);
+
+	// North pointer
+	const north = new Mesh(
+		new ConeGeometry(0.08, 0.5, 4),
+		new MeshStandardMaterial({
+			color: '#ff3333', emissive: '#ff3333', emissiveIntensity: 1.5,
+		}),
+	);
+	north.position.set(0, 0.02, -0.55);
+	north.rotation.x = -Math.PI / 2;
+	g.add(north);
+
+	// South pointer
+	const south = new Mesh(
+		new ConeGeometry(0.06, 0.4, 4),
+		new MeshStandardMaterial({
+			color: scheme.primary, emissive: scheme.primary, emissiveIntensity: 0.5,
+		}),
+	);
+	south.position.set(0, 0.02, 0.55);
+	south.rotation.x = Math.PI / 2;
+	g.add(south);
+
+	// East/West marks
+	for (let i = 0; i < 4; i++) {
+		const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+		const tick = new Mesh(
+			new BoxGeometry(0.03, 0.01, 0.12),
+			new MeshStandardMaterial({
+				color: scheme.accent, emissive: scheme.accent, emissiveIntensity: 0.4,
+			}),
+		);
+		tick.position.set(Math.cos(angle) * 0.6, 0.01, Math.sin(angle) * 0.6);
+		tick.lookAt(0, 0.01, 0);
+		g.add(tick);
+	}
+
+	return g;
+}
+
+// Enemy radar blip
+export function createRadarBlip(type: EnemyType, scheme: typeof COLOR_SCHEMES[0]): Mesh {
+	const colors: Record<EnemyType, string> = {
+		[EnemyType.Sloop]: '#00ff66',
+		[EnemyType.Brigantine]: '#ffaa00',
+		[EnemyType.Galleon]: '#ff4444',
+		[EnemyType.ManOWar]: '#ff00ff',
+	};
+	const sizes: Record<EnemyType, number> = {
+		[EnemyType.Sloop]: 0.04,
+		[EnemyType.Brigantine]: 0.05,
+		[EnemyType.Galleon]: 0.06,
+		[EnemyType.ManOWar]: 0.08,
+	};
+	return new Mesh(
+		new SphereGeometry(sizes[type], 4, 3),
+		new MeshStandardMaterial({
+			color: colors[type], emissive: colors[type], emissiveIntensity: 2,
+		}),
+	);
+}
+
+// Decorative floating lantern
+export function createLantern(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Frame
+	const frame = new Mesh(
+		new BoxGeometry(0.15, 0.2, 0.15),
+		new MeshStandardMaterial({
+			color: '#444444', emissive: '#222222', emissiveIntensity: 0.2,
+		}),
+	);
+	g.add(frame);
+
+	// Light glow
+	const glow = new Mesh(
+		new SphereGeometry(0.1, 6, 4),
+		new MeshStandardMaterial({
+			color: scheme.accent, emissive: scheme.accent, emissiveIntensity: 3,
+			transparent: true, opacity: 0.8,
+		}),
+	);
+	g.add(glow);
+
+	// Top hook
+	const hook = new Mesh(
+		new CylinderGeometry(0.01, 0.01, 0.1, 4),
+		new MeshStandardMaterial({ color: '#555555' }),
+	);
+	hook.position.y = 0.15;
+	g.add(hook);
+
+	return g;
+}
+
+// Create island decoration (distant background)
+export function createIsland(scheme: typeof COLOR_SCHEMES[0]): Group {
+	const g = new Group();
+	// Rock base
+	const base = new Mesh(
+		new CylinderGeometry(3, 4, 1.5, 8),
+		new MeshStandardMaterial({
+			color: '#2a1f0e', emissive: '#1a0f04', emissiveIntensity: 0.2,
+		}),
+	);
+	g.add(base);
+
+	// Palm tree trunk
+	const trunk = new Mesh(
+		new CylinderGeometry(0.15, 0.2, 3, 6),
+		new MeshStandardMaterial({
+			color: '#5c3a1e', emissive: '#3a200a', emissiveIntensity: 0.2,
+		}),
+	);
+	trunk.position.set(0.5, 2, 0);
+	trunk.rotation.z = -0.15;
+	g.add(trunk);
+
+	// Palm fronds
+	for (let i = 0; i < 5; i++) {
+		const angle = (i / 5) * Math.PI * 2;
+		const frond = new Mesh(
+			new ConeGeometry(0.6, 1.8, 3),
+			new MeshStandardMaterial({
+				color: '#006600', emissive: '#004400', emissiveIntensity: 0.3,
+				transparent: true, opacity: 0.8,
+			}),
+		);
+		frond.position.set(
+			0.5 + Math.cos(angle) * 0.6,
+			3.5,
+			Math.sin(angle) * 0.6,
+		);
+		frond.rotation.set(Math.random() * 0.5, 0, Math.random() * 0.5 - 0.25);
+		g.add(frond);
+	}
+
+	// Skull decoration
+	const skull = new Mesh(
+		new SphereGeometry(0.2, 6, 4),
+		new MeshStandardMaterial({
+			color: scheme.primary, emissive: scheme.primary, emissiveIntensity: 0.5,
+		}),
+	);
+	skull.position.set(-1, 1, 0.5);
+	g.add(skull);
+
+	return g;
+}
+
+// Floating seagull silhouette
+export function createSeagull(): Group {
+	const g = new Group();
+	// Body
+	const body = new Mesh(
+		new SphereGeometry(0.08, 4, 3),
+		new MeshStandardMaterial({
+			color: '#888888', emissive: '#444444', emissiveIntensity: 0.3,
+		}),
+	);
+	g.add(body);
+
+	// Wings
+	for (let side = -1; side <= 1; side += 2) {
+		const wing = new Mesh(
+			new BoxGeometry(0.25, 0.01, 0.08),
+			new MeshStandardMaterial({
+				color: '#999999', emissive: '#555555', emissiveIntensity: 0.3,
+			}),
+		);
+		wing.position.set(side * 0.15, 0.02, 0);
+		wing.rotation.z = side * 0.3;
+		g.add(wing);
+	}
+
 	return g;
 }
