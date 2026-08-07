@@ -54,4 +54,6 @@
   </div>
   <div class="combo" id="hud-combo"></div>
   <div class="boss-bar" id="hud-boss"></div>
+  <div class="label" id="hud-powerups"></div>
+  <div class="label" id="hud-dash"></div>
 </Panel>

@@ -68,6 +68,13 @@
       "content": { "type": "asset", "asset": "shop-panel" },
       "transform": { "position": [0, 4, -5], "scale": 0.45 },
       "components": { "RayInteractable": {} }
+    },
+    {
+      "id": "tutorial-panel",
+      "name": "Tutorial Panel",
+      "content": { "type": "asset", "asset": "tutorial-panel" },
+      "transform": { "position": [0, 4, -5], "scale": 0.45 },
+      "components": { "RayInteractable": {} }
     }
   ]
 }

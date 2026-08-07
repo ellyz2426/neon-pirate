@@ -39,4 +39,9 @@ export default defineAssets({
 		type: AssetType.UIKitML,
 		name: 'Shop Panel',
 	},
+	'tutorial-panel': {
+		url: publicAssetUrl('ui/tutorial.uikitml'),
+		type: AssetType.UIKitML,
+		name: 'Tutorial Panel',
+	},
 });

@@ -12,12 +12,15 @@ import {
 	FogExp2,
 	Mesh,
 	MeshStandardMaterial,
+	MeshBasicMaterial,
 	SphereGeometry,
 	CylinderGeometry,
 	BoxGeometry,
 	ConeGeometry,
+	RingGeometry,
 	Group,
 	AdditiveBlending,
+	DoubleSide,
 } from '@iwsdk/core';
 
 import {
@@ -126,6 +129,32 @@ interface WakeParticle {
 	vx: number;
 	vz: number;
 }
+
+interface PowerUpData {
+	group: Group;
+	type: number; // 0=speed, 1=damage, 2=shield, 3=repair, 4=multishot
+	px: number;
+	pz: number;
+	bobPhase: number;
+	lifetime: number;
+}
+
+interface WhirlpoolData {
+	group: Group;
+	px: number;
+	pz: number;
+	strength: number;
+	rotationSpeed: number;
+	lifetime: number;
+	maxLifetime: number;
+}
+
+// Power-up types
+const PU_SPEED = 0;
+const PU_DAMAGE = 1;
+const PU_SHIELD = 2;
+const PU_REPAIR = 3;
+const PU_MULTISHOT = 4;
 
 // Stats stored in localStorage
 interface CareerStats {
@@ -275,6 +304,27 @@ export class GameSystem extends createSystem({}) {
 
 	// Ambient particles (floating embers on water)
 	private ambientParticles: { mesh: Mesh; vx: number; vz: number; vy: number; life: number }[] = [];
+
+	// Tutorial panel
+	private tutorialPanel: UIKitMLAsset | undefined;
+
+	// Power-ups
+	private powerUps: PowerUpData[] = [];
+	private activePowerUps: { type: number; timer: number; duration: number }[] = [];
+	private shieldMesh: Mesh | null = null;
+
+	// Whirlpools
+	private whirlpools: WhirlpoolData[] = [];
+
+	// Dash ability
+	private dashCooldown = 0;
+	private dashTimer = 0;
+	private isDashing = false;
+	private dashInvincible = false;
+	private prevDashKey = false;
+
+	// Muzzle flash
+	private muzzleFlashes: { mesh: Mesh; timer: number }[] = [];
 
 	init() {
 		const settings = loadSettings();
@@ -491,6 +541,15 @@ export class GameSystem extends createSystem({}) {
 			playMenuSelect(this.volume); this.startNextWave();
 		});
 
+		// Tutorial
+		this.tutorialPanel = this.world.getSceneObject<UIKitMLAsset>('tutorial-panel');
+		this.menuPanel?.getElementById('btn-tutorial')?.addEventListener('click', () => {
+			playMenuSelect(this.volume); this.showPanel('tutorial');
+		});
+		this.tutorialPanel?.getElementById('btn-tutorial-back')?.addEventListener('click', () => {
+			playMenuSelect(this.volume); this.showPanel('menu');
+		});
+
 		this.updateSettingsDisplay();
 	}
 
@@ -503,6 +562,7 @@ export class GameSystem extends createSystem({}) {
 			settings: this.settingsPanel,
 			stats: this.statsPanel,
 			shop: this.shopPanel,
+			tutorial: this.tutorialPanel,
 		};
 
 		for (const [name, p] of Object.entries(panels)) {
@@ -592,6 +652,14 @@ export class GameSystem extends createSystem({}) {
 			}
 		}
 
+		// Whirlpools on wave 5+
+		if (this.wave >= 5) {
+			const wpCount = Math.min(Math.floor((this.wave - 3) / 3), 3);
+			for (let i = 0; i < wpCount; i++) {
+				this.spawnWhirlpool();
+			}
+		}
+
 		const bpm = 100 + Math.min(this.wave * 5, 60);
 		setBPM(bpm, this.volume);
 	}
@@ -675,6 +743,13 @@ export class GameSystem extends createSystem({}) {
 		this.wakeParticles = [];
 		for (const sp of this.scorePopups) sp.mesh.removeFromParent();
 		this.scorePopups = [];
+		for (const pu of this.powerUps) pu.group.removeFromParent();
+		this.powerUps = [];
+		for (const wp of this.whirlpools) wp.group.removeFromParent();
+		this.whirlpools = [];
+		this.activePowerUps = [];
+		for (const mf of this.muzzleFlashes) mf.mesh.removeFromParent();
+		this.muzzleFlashes = [];
 	}
 
 	// ==== SPAWNING ====
@@ -757,14 +832,19 @@ export class GameSystem extends createSystem({}) {
 		const scheme = getScheme(this.colorScheme);
 		playCannonFire(this.volume);
 
-		const speed = 25;
+		const speed = this.hasPowerUp(PU_SPEED) ? 32 : 25;
+		const dmgMult = this.hasPowerUp(PU_DAMAGE) ? 2 : 1;
+		const extraShot = this.hasPowerUp(PU_MULTISHOT);
 		const spreadAngles: number[] = [];
-		if (this.cannonSpread === 1) {
+		const baseSpread = extraShot ? Math.max(this.cannonSpread + 1, 3) : this.cannonSpread;
+		if (baseSpread === 1) {
 			spreadAngles.push(0);
-		} else if (this.cannonSpread === 2) {
+		} else if (baseSpread === 2) {
 			spreadAngles.push(-0.1, 0.1);
-		} else {
+		} else if (baseSpread === 3) {
 			spreadAngles.push(-0.15, 0, 0.15);
+		} else {
+			spreadAngles.push(-0.2, -0.07, 0.07, 0.2);
 		}
 
 		for (const spreadOff of spreadAngles) {
@@ -779,9 +859,12 @@ export class GameSystem extends createSystem({}) {
 			mesh.position.set(startX, 2, startZ);
 			this.world.scene.add(mesh);
 
+			// Muzzle flash
+			this.spawnMuzzleFlash(startX, 2.2, startZ);
+
 			this.cannonballs.push({
 				mesh, vx, vy, vz,
-				damage: this.cannonDamage,
+				damage: this.cannonDamage * dmgMult,
 				isEnemy: false,
 				lifetime: 0,
 				maxLifetime: 4,
@@ -962,6 +1045,15 @@ export class GameSystem extends createSystem({}) {
 		} else {
 			this.hudPanel?.getElementById('hud-boss')?.setProperties({ text: '' });
 		}
+
+		// Active power-ups display
+		const puNames = ['SPD', 'DMG', 'SHD', 'REP', 'MLT'];
+		const puText = this.activePowerUps.map(p => `${puNames[p.type]} ${Math.ceil(p.timer)}s`).join(' | ');
+		this.hudPanel?.getElementById('hud-powerups')?.setProperties({ text: puText });
+
+		// Dash display
+		const dashText = this.dashCooldown > 0 ? `Dash: ${this.dashCooldown.toFixed(1)}s` : 'Dash: Ready';
+		this.hudPanel?.getElementById('hud-dash')?.setProperties({ text: dashText });
 	}
 
 	// ==== MAIN UPDATE ====
@@ -1001,6 +1093,7 @@ export class GameSystem extends createSystem({}) {
 		const rightStick = rightGamepad?.getAxesValues(InputComponent.Thumbstick);
 		const triggerDown = rightGamepad?.getButtonPressed(InputComponent.Trigger) ?? false;
 		const gripDown = rightGamepad?.getButtonDown(InputComponent.Squeeze) ?? false;
+		const aButtonDown = rightGamepad?.getButtonDown(InputComponent.A_Button) ?? false;
 
 		const moveX = (this.keys.has('a') || this.keys.has('arrowleft') ? -1 : 0) +
 			(this.keys.has('d') || this.keys.has('arrowright') ? 1 : 0) +
@@ -1030,8 +1123,9 @@ export class GameSystem extends createSystem({}) {
 			this.playerMoveX = moveX;
 			this.playerMoveZ = moveZ;
 
-			this.playerShipGroup.position.x += moveX * this.playerSpeed * delta;
-			this.playerShipGroup.position.z += moveZ * this.playerSpeed * delta;
+			const effectiveSpeed = this.playerSpeed * (this.hasPowerUp(PU_SPEED) ? 1.8 : 1.0);
+			this.playerShipGroup.position.x += moveX * effectiveSpeed * delta;
+			this.playerShipGroup.position.z += moveZ * effectiveSpeed * delta;
 			this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
 			this.playerShipGroup.position.z = MathUtils.clamp(this.playerShipGroup.position.z, -40, 40);
 
@@ -1057,6 +1151,37 @@ export class GameSystem extends createSystem({}) {
 			// Bob on water
 			this.playerShipGroup.position.y = Math.sin(this.time * 1.5) * 0.15;
 
+			// Dash ability
+			const dashKey = this.keys.has('shift') || aButtonDown;
+			if (dashKey && !this.prevDashKey && this.dashCooldown <= 0 && (Math.abs(moveX) > 0.1 || Math.abs(moveZ) > 0.1)) {
+				this.isDashing = true;
+				this.dashTimer = 0.3;
+				this.dashCooldown = 2.0;
+				this.dashInvincible = true;
+				playMenuSelect(this.volume);
+			}
+			this.prevDashKey = dashKey;
+
+			if (this.isDashing) {
+				this.dashTimer -= delta;
+				const dashSpeed = 20;
+				this.playerShipGroup.position.x += moveX * dashSpeed * delta;
+				this.playerShipGroup.position.z += moveZ * dashSpeed * delta;
+				this.playerShipGroup.position.x = MathUtils.clamp(this.playerShipGroup.position.x, -40, 40);
+				this.playerShipGroup.position.z = MathUtils.clamp(this.playerShipGroup.position.z, -40, 40);
+
+				// Dash trail
+				const scheme = getScheme(this.colorScheme);
+				this.spawnWakeTrail(this.playerShipGroup.position.x, this.playerShipGroup.position.z, scheme);
+
+				if (this.dashTimer <= 0) {
+					this.isDashing = false;
+					this.dashInvincible = false;
+				}
+			}
+
+			if (this.dashCooldown > 0) this.dashCooldown -= delta;
+
 			// Follow camera
 			this.baseCamPos.x = MathUtils.lerp(this.baseCamPos.x, this.playerShipGroup.position.x, 2 * delta);
 			this.baseCamPos.z = MathUtils.lerp(this.baseCamPos.z, this.playerShipGroup.position.z + 15, 2 * delta);
@@ -1079,6 +1204,15 @@ export class GameSystem extends createSystem({}) {
 		this.updateCannonballs(delta);
 		this.updateTreasures(delta);
 		this.updateMines(delta);
+		this.updatePowerUps(delta);
+		this.updateActivePowerUps(delta);
+		this.updateWhirlpools(delta);
+		this.updateMuzzleFlashes(delta);
+
+		// Spawn random power-ups
+		if (Math.random() < 0.002 * (1 + this.wave * 0.05) && this.powerUps.length < 3) {
+			this.spawnPowerUp();
+		}
 
 		// Combo decay
 		if (this.combo > 0) {
@@ -1123,16 +1257,57 @@ export class GameSystem extends createSystem({}) {
 				enemy.group.position.x += (dx / dist) * enemy.speed * delta;
 				enemy.group.position.z += (dz / dist) * enemy.speed * delta;
 			} else {
-				// Circle strafe
-				const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
-				enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.5 * delta;
-				enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.5 * delta;
+				// Different behaviors by ship type
+				if (enemy.shipType === EnemyType.Sloop) {
+					// Sloops: fast flanking — orbit quickly, dash in on hard
+					const orbitSpeed = enemy.speed * 0.8;
+					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+					enemy.group.position.x += Math.cos(circleAngle) * orbitSpeed * delta;
+					enemy.group.position.z += Math.sin(circleAngle) * orbitSpeed * delta;
 
-				// Occasional dash toward player (sloops only, hard difficulty)
-				if (enemy.shipType === EnemyType.Sloop && this.difficulty === DIFF_HARD && enemy.dashCooldown <= 0 && dist < 15) {
-					enemy.group.position.x += (dx / dist) * 8 * delta;
-					enemy.group.position.z += (dz / dist) * 8 * delta;
-					enemy.dashCooldown = 5;
+					if (this.difficulty === DIFF_HARD && enemy.dashCooldown <= 0 && dist < 15) {
+						enemy.group.position.x += (dx / dist) * 10 * delta;
+						enemy.group.position.z += (dz / dist) * 10 * delta;
+						enemy.dashCooldown = 4;
+					}
+				} else if (enemy.shipType === EnemyType.Galleon) {
+					// Galleons: ram behavior — charge directly when close enough
+					if (dist < 10 && enemy.dashCooldown <= 0) {
+						// Ram charge
+						enemy.group.position.x += (dx / dist) * enemy.speed * 2.5 * delta;
+						enemy.group.position.z += (dz / dist) * enemy.speed * 2.5 * delta;
+						// Ram hit
+						if (dist < 4 && !this.dashInvincible && !this.hasPowerUp(PU_SHIELD)) {
+							this.playerHp -= 15;
+							this.damageFlashTimer = 0.3;
+							this.shakeIntensity = Math.max(this.shakeIntensity, 1.5);
+							playHit(this.volume);
+							enemy.dashCooldown = 8;
+							// Knockback player
+							playerPos.x += (dx / dist) * -5;
+							playerPos.z += (dz / dist) * -5;
+						}
+					} else {
+						// Normal circle
+						const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+						enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.3 * delta;
+						enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.3 * delta;
+					}
+				} else if (enemy.shipType === EnemyType.ManOWar) {
+					// Boss: slow advance, tries to close distance
+					if (dist > 8) {
+						enemy.group.position.x += (dx / dist) * enemy.speed * 0.6 * delta;
+						enemy.group.position.z += (dz / dist) * enemy.speed * 0.6 * delta;
+					}
+					// Slight orbit at close range
+					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+					enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.2 * delta;
+					enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.2 * delta;
+				} else {
+					// Brigantine: standard circle strafe
+					const circleAngle = Math.atan2(dz, dx) + (Math.PI / 2) * enemy.circleDir;
+					enemy.group.position.x += Math.cos(circleAngle) * enemy.speed * 0.5 * delta;
+					enemy.group.position.z += Math.sin(circleAngle) * enemy.speed * 0.5 * delta;
 				}
 
 				// Change circle direction occasionally
@@ -1160,6 +1335,17 @@ export class GameSystem extends createSystem({}) {
 			// Boss special: repair at low HP
 			if (enemy.shipType === EnemyType.ManOWar && enemy.hp < enemy.maxHp * 0.3 && Math.random() < 0.001) {
 				enemy.hp = Math.min(enemy.hp + 5, enemy.maxHp);
+			}
+
+			// Avoid whirlpools
+			for (const wp of this.whirlpools) {
+				const wx = enemy.group.position.x - wp.px;
+				const wz = enemy.group.position.z - wp.pz;
+				const wdist = Math.sqrt(wx * wx + wz * wz);
+				if (wdist < 8 && wdist > 0.5) {
+					enemy.group.position.x += (wx / wdist) * enemy.speed * delta;
+					enemy.group.position.z += (wz / wdist) * enemy.speed * delta;
+				}
 			}
 		}
 
@@ -1236,6 +1422,14 @@ export class GameSystem extends createSystem({}) {
 				const dz = ball.mesh.position.z - playerPos.z;
 				const dist = Math.sqrt(dx * dx + dz * dz);
 				if (dist < 3 && ball.mesh.position.y < 3) {
+					// Check shield or dash invincibility
+					const hasShield = this.activePowerUps.some(p => p.type === PU_SHIELD);
+					if (this.dashInvincible || hasShield) {
+						// Deflect
+						this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.3);
+						toRemove.push(i);
+						continue;
+					}
 					this.playerHp -= ball.damage;
 					playHit(this.volume);
 					this.spawnExplosion(ball.mesh.position.x, ball.mesh.position.y, ball.mesh.position.z, 0.5);
@@ -1428,6 +1622,250 @@ export class GameSystem extends createSystem({}) {
 					this.playerHp = 0;
 					this.endGame();
 				}
+			}
+		}
+	}
+
+	// ── Power-ups ──────────────────────────────────────────────
+	private spawnPowerUp() {
+		const type = Math.floor(Math.random() * 5);
+		const px = (Math.random() - 0.5) * 70;
+		const pz = (Math.random() - 0.5) * 70;
+		const group = new Group();
+
+		const scheme = getScheme(this.colorScheme);
+		const colors = [0x00ffff, 0xff4444, 0x8888ff, 0x00ff88, 0xffaa00];
+		const icons = ['SPD', 'DMG', 'SHD', 'REP', 'MLT'];
+		const color = colors[type];
+
+		// Glowing orb
+		const orb = new Mesh(
+			new SphereGeometry(0.6, 12, 8),
+			new MeshBasicMaterial({ color, transparent: true, opacity: 0.7 }),
+		);
+		group.add(orb);
+
+		// Outer ring
+		const ring = new Mesh(
+			new RingGeometry(0.8, 1.0, 16),
+			new MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: DoubleSide }),
+		);
+		group.add(ring);
+
+		group.position.set(px, 1.5, pz);
+		this.scene.add(group);
+		this.powerUps.push({ group, type, px, pz, bobPhase: Math.random() * Math.PI * 2, lifetime: 15 });
+	}
+
+	private updatePowerUps(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+		const toRemove: number[] = [];
+
+		for (let i = 0; i < this.powerUps.length; i++) {
+			const pu = this.powerUps[i];
+			pu.lifetime -= delta;
+			pu.bobPhase += delta * 3;
+			pu.group.position.y = 1.5 + Math.sin(pu.bobPhase) * 0.5;
+			pu.group.rotation.y += delta * 2;
+
+			// Fade when expiring
+			if (pu.lifetime < 3) {
+				const children = pu.group.children as Mesh[];
+				for (const ch of children) {
+					if (ch.material && 'opacity' in ch.material) {
+						(ch.material as MeshBasicMaterial).opacity = (pu.lifetime / 3) * 0.7;
+					}
+				}
+			}
+
+			if (pu.lifetime <= 0) {
+				toRemove.push(i);
+				continue;
+			}
+
+			// Player collection
+			const dx = playerPos.x - pu.group.position.x;
+			const dz = playerPos.z - pu.group.position.z;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < 3) {
+				this.activatePowerUp(pu.type);
+				toRemove.push(i);
+				playTreasureCollect(this.volume);
+				this.spawnExplosion(pu.group.position.x, pu.group.position.y, pu.group.position.z, 0.3);
+			}
+		}
+
+		for (let i = toRemove.length - 1; i >= 0; i--) {
+			this.powerUps[toRemove[i]].group.removeFromParent();
+			this.powerUps.splice(toRemove[i], 1);
+		}
+	}
+
+	private activatePowerUp(type: number) {
+		if (!this.playerShipGroup) return;
+		const durations = [8, 8, 10, 0, 6];
+		const names = ['SPEED BOOST', 'DOUBLE DAMAGE', 'SHIELD', 'REPAIR', 'MULTISHOT'];
+		this.spawnScorePopup(this.playerShipGroup.position.x, 5, this.playerShipGroup.position.z, 999);
+
+		if (type === PU_REPAIR) {
+			this.playerHp = Math.min(this.playerMaxHp, this.playerHp + Math.floor(this.playerMaxHp * 0.3));
+			return;
+		}
+
+		// Remove existing of same type
+		this.activePowerUps = this.activePowerUps.filter(p => p.type !== type);
+		this.activePowerUps.push({ type, timer: durations[type], duration: durations[type] });
+
+		// Shield visual
+		if (type === PU_SHIELD) {
+			if (!this.shieldMesh) {
+				this.shieldMesh = new Mesh(
+					new SphereGeometry(3.5, 16, 12),
+					new MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.15, side: DoubleSide }),
+				);
+			}
+			if (this.playerShipGroup) this.playerShipGroup.add(this.shieldMesh);
+		}
+	}
+
+	private updateActivePowerUps(delta: number) {
+		for (let i = this.activePowerUps.length - 1; i >= 0; i--) {
+			this.activePowerUps[i].timer -= delta;
+			if (this.activePowerUps[i].timer <= 0) {
+				if (this.activePowerUps[i].type === PU_SHIELD && this.shieldMesh) {
+					this.shieldMesh.removeFromParent();
+				}
+				this.activePowerUps.splice(i, 1);
+			}
+		}
+
+		// Shield pulse
+		if (this.shieldMesh && this.shieldMesh.parent) {
+			(this.shieldMesh.material as MeshBasicMaterial).opacity = 0.1 + Math.sin(this.time * 4) * 0.05;
+		}
+	}
+
+	private hasPowerUp(type: number): boolean {
+		return this.activePowerUps.some(p => p.type === type);
+	}
+
+	// ── Whirlpools ──────────────────────────────────────────────
+	private spawnWhirlpool() {
+		const px = (Math.random() - 0.5) * 60;
+		const pz = (Math.random() - 0.5) * 60;
+
+		// Don't spawn too close to player
+		const psx = this.playerShipGroup?.position.x ?? 0;
+		const psz = this.playerShipGroup?.position.z ?? 0;
+		const dx = psx - px;
+		const dz = psz - pz;
+		if (Math.sqrt(dx * dx + dz * dz) < 15) return;
+
+		const group = new Group();
+		const maxLife = 20 + Math.random() * 15;
+
+		// Spiral rings
+		for (let r = 0; r < 4; r++) {
+			const ring = new Mesh(
+				new RingGeometry(2 + r * 1.5, 2.5 + r * 1.5, 24),
+				new MeshBasicMaterial({ color: 0x0066aa, transparent: true, opacity: 0.3 - r * 0.05, side: DoubleSide }),
+			);
+			ring.rotation.x = -Math.PI / 2;
+			ring.position.y = 0.1 + r * 0.05;
+			group.add(ring);
+		}
+
+		group.position.set(px, 0.3, pz);
+		this.scene.add(group);
+		this.whirlpools.push({ group, px, pz, strength: 3 + this.wave * 0.3, rotationSpeed: 2, lifetime: 0, maxLifetime: maxLife });
+	}
+
+	private updateWhirlpools(delta: number) {
+		if (!this.playerShipGroup) return;
+		const playerPos = this.playerShipGroup.position;
+		const toRemove: number[] = [];
+
+		for (let i = 0; i < this.whirlpools.length; i++) {
+			const wp = this.whirlpools[i];
+			wp.lifetime += delta;
+			wp.group.rotation.y += wp.rotationSpeed * delta;
+
+			// Fade in/out
+			const fadeIn = Math.min(wp.lifetime / 2, 1);
+			const fadeOut = Math.max(0, 1 - (wp.lifetime - wp.maxLifetime + 3) / 3);
+			const fade = Math.min(fadeIn, fadeOut);
+			const children = wp.group.children as Mesh[];
+			for (let c = 0; c < children.length; c++) {
+				(children[c].material as MeshBasicMaterial).opacity = (0.3 - c * 0.05) * fade;
+			}
+
+			if (wp.lifetime >= wp.maxLifetime) {
+				toRemove.push(i);
+				continue;
+			}
+
+			// Pull player
+			const dx = wp.px - playerPos.x;
+			const dz = wp.pz - playerPos.z;
+			const dist = Math.sqrt(dx * dx + dz * dz);
+			if (dist < 12 && dist > 0.5 && !this.isDashing) {
+				const pull = (wp.strength / dist) * delta * fade;
+				playerPos.x += (dx / dist) * pull;
+				playerPos.z += (dz / dist) * pull;
+
+				// Circular drag
+				const tangentX = -dz / dist;
+				const tangentZ = dx / dist;
+				playerPos.x += tangentX * pull * 0.5;
+				playerPos.z += tangentZ * pull * 0.5;
+			}
+
+			// Damage if too close
+			if (dist < 3 && !this.dashInvincible) {
+				this.playerHp -= delta * 5;
+				this.damageFlashTimer = 0.2;
+			}
+
+			// Pull enemies too
+			for (const enemy of this.enemies) {
+				const ex = wp.px - enemy.group.position.x;
+				const ez = wp.pz - enemy.group.position.z;
+				const edist = Math.sqrt(ex * ex + ez * ez);
+				if (edist < 12 && edist > 0.5) {
+					const pull = (wp.strength * 0.5 / edist) * delta * fade;
+					enemy.group.position.x += (ex / edist) * pull;
+					enemy.group.position.z += (ez / edist) * pull;
+				}
+			}
+		}
+
+		for (let i = toRemove.length - 1; i >= 0; i--) {
+			this.whirlpools[toRemove[i]].group.removeFromParent();
+			this.whirlpools.splice(toRemove[i], 1);
+		}
+	}
+
+	// ── Muzzle Flashes ──────────────────────────────────────────
+	private spawnMuzzleFlash(x: number, y: number, z: number) {
+		const flash = new Mesh(
+			new SphereGeometry(0.4, 6, 4),
+			new MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.9 }),
+		);
+		flash.position.set(x, y, z);
+		this.scene.add(flash);
+		this.muzzleFlashes.push({ mesh: flash, timer: 0.08 });
+	}
+
+	private updateMuzzleFlashes(delta: number) {
+		for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
+			this.muzzleFlashes[i].timer -= delta;
+			const f = this.muzzleFlashes[i];
+			(f.mesh.material as MeshBasicMaterial).opacity = Math.max(0, f.timer / 0.08);
+			f.mesh.scale.setScalar(1 + (0.08 - f.timer) * 8);
+			if (f.timer <= 0) {
+				f.mesh.removeFromParent();
+				this.muzzleFlashes.splice(i, 1);
 			}
 		}
 	}

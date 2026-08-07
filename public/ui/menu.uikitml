@@ -56,4 +56,7 @@
   <div class="btn" id="btn-stats">
     <div class="btn-text">CAPTAIN'S LOG</div>
   </div>
+  <div class="btn" id="btn-tutorial">
+    <div class="btn-text">HOW TO PLAY</div>
+  </div>
 </Panel>
